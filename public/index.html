@@ -66,6 +66,10 @@
     .status { color: var(--muted); font-size: 13px; margin: 12px 0; }
     .empty { padding: 28px; text-align: center; color: var(--muted); }
     .verified { color: #8ce2ae; }
+    .hidden { display: none !important; }
+    .guild-logo { width: 42px; height: 42px; object-fit: contain; border-radius: 8px; background: #0c1020; }
+    .guild-name { display: flex; align-items: center; gap: 12px; }
+    .guild-score { color: var(--gold); font-weight: 800; font-size: 1.05rem; }
     @media (max-width: 700px) {
       .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -88,7 +92,7 @@
     <button data-game="Grand Cross" data-category="Jefes">Grand Cross · Jefes</button>
   </div>
 
-  <div class="filters">
+  <div id="filters" class="filters">
     <input id="season" placeholder="Temporada (todas)">
     <input id="challenge" placeholder="Jefe o desafío">
     <select id="verified">
@@ -100,7 +104,7 @@
 
   <div id="summary" class="status">Conectando con Shopify…</div>
 
-  <section class="panel">
+  <section id="leaderboardPanel" class="panel">
     <div class="table-wrap">
       <table>
         <thead>
@@ -112,6 +116,14 @@
         <tbody id="rows">
           <tr><td colspan="7" class="empty">Cargando registros…</td></tr>
         </tbody>
+      </table>
+    </div>
+  </section>
+  <section id="guildPanel" class="panel hidden">
+    <div class="table-wrap">
+      <table style="min-width:560px">
+        <thead><tr><th>Posición</th><th>Gremio</th><th>Juego</th><th>Puntuación</th><th>Estado</th></tr></thead>
+        <tbody id="guildRows"><tr><td colspan="5" class="empty">Cargando ranking de gremios…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -142,6 +154,11 @@ function esc(value) {
 }
 
 async function loadLeaderboard() {
+  const guildMode = game === "Origin" && category === "Gremios";
+  $("#filters").classList.toggle("hidden", guildMode);
+  $("#leaderboardPanel").classList.toggle("hidden", guildMode);
+  $("#guildPanel").classList.toggle("hidden", !guildMode);
+  if (guildMode) return loadGuilds();
   $("#rows").innerHTML =
     '<tr><td colspan="7" class="empty">Consultando registros…</td></tr>';
   $("#status").textContent = "";
@@ -191,6 +208,29 @@ async function loadLeaderboard() {
     $("#rows").innerHTML =
       '<tr><td colspan="7" class="empty">No fue posible cargar los registros.</td></tr>';
     $("#status").textContent = "Error: " + error.message;
+  }
+}
+
+
+async function loadGuilds() {
+  $("#guildRows").innerHTML = '<tr><td colspan="5" class="empty">Consultando ranking de gremios…</td></tr>';
+  $("#status").textContent = "";
+  const params = new URLSearchParams({ game: "Origin", verified: $("#verified").value });
+  try {
+    const response = await fetch("/api/guilds?" + params);
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "No se pudo cargar el ranking de gremios.");
+    const guilds = data.guilds || [];
+    $("#summary").textContent = guilds.length + " gremio(s) · Origin · Ranking de gremios";
+    $("#guildRows").innerHTML = guilds.map(g => {
+      const logo = g.logo ? '<img class="guild-logo" src="' + esc(g.logo) + '" alt="Logo de ' + esc(g.name) + '" loading="lazy">' : '';
+      return '<tr><td class="rank">#' + g.rank + '</td><td><div class="guild-name">' + logo + '<strong>' + esc(g.name || "Gremio sin nombre") + '</strong></div></td><td>' + esc(g.game || "Origin") + '</td><td class="guild-score">' + Number(g.score || 0).toLocaleString("es-MX") + '</td><td class="' + (g.verified ? "verified" : "") + '">' + (g.verified ? "Verificado" : "Pendiente") + '</td></tr>';
+    }).join("") || '<tr><td colspan="5" class="empty">Todavía no hay gremios registrados en Ranking de Gremios.</td></tr>';
+    $("#status").textContent = "Ranking de gremios actualizado.";
+  } catch (error) {
+    $("#summary").textContent = "No se pudo cargar el ranking de gremios";
+    $("#guildRows").innerHTML = '<tr><td colspan="5" class="empty">No fue posible cargar el ranking de gremios.</td></tr>';
+    $("#status").textContent = "Error: " + error.message + ". Comprueba que el metaobjeto ranking_gremios tenga los campos configurados.";
   }
 }
 
