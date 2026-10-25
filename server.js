@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = Number(process.env.PORT || 3000);
-const BUILD = "el-lobby-hall-of-fame-v2";
+const BUILD = "el-lobby-hall-of-fame-v3";
 const APP_URL = (process.env.APP_URL || "").replace(/\/$/, "");
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY || "";
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || "";
@@ -155,6 +155,39 @@ const server = http.createServer(async (req, res) => {
       const leaderboard = filterLeaderboard(nodes.map(normalizeRecord), url.searchParams);
       return send(res, 200, { ok: true, count: leaderboard.length, filters: Object.fromEntries(url.searchParams.entries()), leaderboard });
     } catch (error) { return send(res, 502, { ok: false, error: error.message, hint: "Comprueba el handle registro_competicion y los permisos de metaobjetos." }); }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/guilds") {
+    try {
+      const nodes = await fetchMetaobjects("ranking_gremios");
+      const game = clean(url.searchParams.get("game")).toLowerCase();
+      const verifiedOnly = url.searchParams.get("verified") === "true";
+      const guilds = nodes.map(node => {
+        const fields = fieldMap(node.fields);
+        const pick = (...keys) => {
+          for (const key of keys) if (fields[key] !== undefined && fields[key] !== null && fields[key] !== "") return fields[key];
+          return "";
+        };
+        const rawLogo = pick("logo_del_gremio", "logo_gremio", "logo");
+        let logo = clean(rawLogo);
+        if (logo && !/^https:\/\//i.test(logo)) logo = "";
+        return {
+          id: node.id,
+          name: clean(pick("nombre_del_gremio", "nombre_de_gremio", "gremio", "nombre")),
+          game: clean(pick("juego")) || "Origin",
+          score: numberField(fields, "puntuacion", "puntuación", "score"),
+          verified: ["true", "1"].includes(clean(pick("verificado")).toLowerCase()),
+          logo
+        };
+      }).filter(g => g.name)
+        .filter(g => !game || g.game.toLowerCase() === game)
+        .filter(g => !verifiedOnly || g.verified)
+        .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, "es"))
+        .map((g, index) => ({ rank: index + 1, ...g }));
+      return send(res, 200, { ok: true, count: guilds.length, guilds });
+    } catch (error) {
+      return send(res, 502, { ok: false, error: error.message, hint: "Comprueba el handle ranking_gremios y los permisos de metaobjetos." });
+    }
   }
   if (req.method === "GET" && url.pathname === "/api/titles") {
     try {
