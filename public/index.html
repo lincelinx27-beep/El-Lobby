@@ -114,7 +114,7 @@
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="7" class="empty">Cargando registros…</td></tr>
+          <tr><td colspan="6" class="empty">Cargando registros…</td></tr>
         </tbody>
       </table>
     </div>
@@ -160,7 +160,7 @@ async function loadLeaderboard() {
   $("#guildPanel").classList.toggle("hidden", !guildMode);
   if (guildMode) return loadGuilds();
   $("#rows").innerHTML =
-    '<tr><td colspan="7" class="empty">Consultando registros…</td></tr>';
+    '<tr><td colspan="6" class="empty">Consultando registros…</td></tr>';
   $("#status").textContent = "";
 
   const params = new URLSearchParams({
@@ -200,13 +200,13 @@ async function loadLeaderboard() {
 
     if (!records.length) {
       $("#rows").innerHTML =
-        '<tr><td colspan="7" class="empty">No hay registros para estos filtros.</td></tr>';
+        '<tr><td colspan="6" class="empty">No hay registros para estos filtros.</td></tr>';
     }
     $("#status").textContent = "Consulta terminada.";
   } catch (error) {
     $("#summary").textContent = "No se pudo conectar";
     $("#rows").innerHTML =
-      '<tr><td colspan="7" class="empty">No fue posible cargar los registros.</td></tr>';
+      '<tr><td colspan="6" class="empty">No fue posible cargar los registros.</td></tr>';
     $("#status").textContent = "Error: " + error.message;
   }
 }
