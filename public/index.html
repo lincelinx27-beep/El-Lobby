@@ -106,7 +106,7 @@
         <thead>
           <tr>
             <th>#</th><th>Jugador / Gremio</th><th>Jefe o desafío</th>
-            <th>Tiempo</th><th>Puntuación</th><th>Temporada</th><th>Estado</th>
+            <th>Tiempo</th><th>Temporada</th><th>Estado</th>
           </tr>
         </thead>
         <tbody id="rows">
@@ -174,7 +174,6 @@ async function loadLeaderboard() {
         </td>
         <td>${esc(r.challenge || "—")}</td>
         <td class="time">${esc(r.formattedTime || "—")}</td>
-        <td>${esc(r.score || "—")}</td>
         <td>${esc(r.season || "—")}</td>
         <td class="${r.verified ? "verified" : ""}">
           ${r.verified ? "Verificado" : "Pendiente"}
