@@ -121,9 +121,9 @@
   </section>
   <section id="guildPanel" class="panel hidden">
     <div class="table-wrap">
-      <table style="min-width:560px">
-        <thead><tr><th>Posición</th><th>Gremio</th><th>Juego</th><th>Puntuación</th><th>Estado</th></tr></thead>
-        <tbody id="guildRows"><tr><td colspan="5" class="empty">Cargando ranking de gremios…</td></tr></tbody>
+      <table style="min-width:420px">
+        <thead><tr><th>#</th><th>Gremio</th><th>Puntuación</th></tr></thead>
+        <tbody id="guildRows"><tr><td colspan="3" class="empty">Cargando ranking de gremios…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -213,7 +213,7 @@ async function loadLeaderboard() {
 
 
 async function loadGuilds() {
-  $("#guildRows").innerHTML = '<tr><td colspan="5" class="empty">Consultando ranking de gremios…</td></tr>';
+  $("#guildRows").innerHTML = '<tr><td colspan="3" class="empty">Consultando ranking de gremios…</td></tr>';
   $("#status").textContent = "";
   const params = new URLSearchParams({ game: "Origin", verified: $("#verified").value });
   try {
@@ -224,12 +224,12 @@ async function loadGuilds() {
     $("#summary").textContent = guilds.length + " gremio(s) · Origin · Ranking de gremios";
     $("#guildRows").innerHTML = guilds.map(g => {
       const logo = g.logo ? '<img class="guild-logo" src="' + esc(g.logo) + '" alt="Logo de ' + esc(g.name) + '" loading="lazy">' : '';
-      return '<tr><td class="rank">#' + g.rank + '</td><td><div class="guild-name">' + logo + '<strong>' + esc(g.name || "Gremio sin nombre") + '</strong></div></td><td>' + esc(g.game || "Origin") + '</td><td class="guild-score">' + Number(g.score || 0).toLocaleString("es-MX") + '</td><td class="' + (g.verified ? "verified" : "") + '">' + (g.verified ? "Verificado" : "Pendiente") + '</td></tr>';
-    }).join("") || '<tr><td colspan="5" class="empty">Todavía no hay gremios registrados en Ranking de Gremios.</td></tr>';
+      return '<tr><td class="rank">#' + g.rank + '</td><td><div class="guild-name">' + logo + '<strong>' + esc(g.name || "Gremio sin nombre") + '</strong></div></td><td class="guild-score">' + Number(g.score || 0).toLocaleString("es-MX") + '</td></tr>';
+    }).join("") || '<tr><td colspan="3" class="empty">Todavía no hay gremios registrados en Ranking de Gremios.</td></tr>';
     $("#status").textContent = "Ranking de gremios actualizado.";
   } catch (error) {
     $("#summary").textContent = "No se pudo cargar el ranking de gremios";
-    $("#guildRows").innerHTML = '<tr><td colspan="5" class="empty">No fue posible cargar el ranking de gremios.</td></tr>';
+    $("#guildRows").innerHTML = '<tr><td colspan="3" class="empty">No fue posible cargar el ranking de gremios.</td></tr>';
     $("#status").textContent = "Error: " + error.message + ". Comprueba que el metaobjeto ranking_gremios tenga los campos configurados.";
   }
 }
