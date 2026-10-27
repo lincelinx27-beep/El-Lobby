@@ -60,9 +60,9 @@ async function handleSeasonAdmin(req, res, url, deps) {
       const shortCategory = category.includes("·") ? category.split("·").pop().trim() : category;
       const nodes = await fetchMetaobjects("registro_competicion");
       const params = new URLSearchParams({ category: shortCategory });
-      if (season) params.set("season", season);
+      const seasonNeedle = season.toLocaleLowerCase().trim();
       const ranking = filterLeaderboard(nodes.map(normalizeRecord), params)
-        .filter(r => r.category.toLowerCase() === shortCategory.toLowerCase());
+        .filter(r => !seasonNeedle || r.season.toLocaleLowerCase().includes(seasonNeedle));
       send(res, 200, { ok: true, season, category, count: ranking.length, ranking });
     } catch (error) {
       send(res, 502, { ok: false, error: error.message || "Error consultando el ranking." });
@@ -84,9 +84,10 @@ async function handleSeasonAdmin(req, res, url, deps) {
         if (!season) return send(res, 400, { ok: false, error: "Escribe el nombre de la temporada." });
         const shortCategory = category.includes("·") ? category.split("·").pop().trim() : category;
         const nodes = await fetchMetaobjects("registro_competicion");
-        const params = new URLSearchParams({ season, category: shortCategory });
+        const params = new URLSearchParams({ category: shortCategory });
+        const seasonNeedle = season.toLocaleLowerCase().trim();
         const ranking = filterLeaderboard(nodes.map(normalizeRecord), params)
-          .filter(r => r.category.toLowerCase() === shortCategory.toLowerCase());
+          .filter(r => r.season.toLocaleLowerCase().includes(seasonNeedle));
         if (!ranking.length) {
           return send(res, 409, { ok: false, error: "No hay registros para esa temporada y categoría; no se archivó nada." });
         }
