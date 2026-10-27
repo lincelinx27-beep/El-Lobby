@@ -3,13 +3,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = Number(process.env.PORT || 3000);
-const BUILD = "avalon-hall-of-fame-v4";
+const BUILD = "avalon-hall-of-fame-v5-season-admin";
 const APP_URL = (process.env.APP_URL || "").replace(/\/$/, "");
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY || "";
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || "";
 const SHOPIFY_SHOP = (process.env.SHOPIFY_SHOP || "").trim().replace(/^https?:\/\//i, "").replace(/\/$/, "");
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-07";
 const HTML_PATH = path.join(__dirname, "public", "index.html");
+const { handleSeasonAdmin } = require("./season-admin");
 
 function send(res, status, body) { res.writeHead(status, { "content-type":"application/json; charset=utf-8","cache-control":"no-store","access-control-allow-origin":"*" }); res.end(JSON.stringify(body,null,2)); }
 function validShop(shop) { return typeof shop==="string" && /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop); }
@@ -50,8 +51,15 @@ function filterLeaderboard(records,params){
   return records.filter(r=>!game||r.game.toLowerCase()===game).filter(r=>!category||r.category.toLowerCase()===category).filter(r=>!season||r.season.toLowerCase()===season).filter(r=>!challenge||r.challenge.toLowerCase()===challenge).filter(r=>!verifiedOnly||r.verified).sort((a,b)=>{if(a.timeMs>0&&b.timeMs>0&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;if(a.timeMs>0&&b.timeMs<=0)return -1;if(a.timeMs<=0&&b.timeMs>0)return 1;return b.score-a.score;}).map((r,index)=>({rank:index+1,...r,formattedTime:r.timeMs>0?`${r.minutes}:${String(r.seconds).padStart(2,"0")}.${String(r.milliseconds).padStart(3,"0")}`:null}));
 }
 const server=http.createServer(async(req,res)=>{
+  const adminHandled = await handleSeasonAdmin(req,res,new URL(req.url,APP_URL||"http://localhost"),{send,clean,shopifyQuery,fetchMetaobjects,normalizeRecord,filterLeaderboard});
+  if (adminHandled) return;
   const url=new URL(req.url,APP_URL||"http://localhost");
   if(req.method==="OPTIONS"){res.writeHead(204,{"access-control-allow-origin":"*","access-control-allow-methods":"GET, OPTIONS","access-control-allow-headers":"content-type"});return res.end();}
+  if(req.method==="GET"&&url.pathname==="/admin-seasons"){
+    const adminPath=path.join(__dirname,"public","admin-seasons.html");
+    if(fs.existsSync(adminPath)){res.writeHead(200,{"content-type":"text/html; charset=utf-8","cache-control":"no-store"});return fs.createReadStream(adminPath).pipe(res);}
+    return send(res,404,{ok:false,error:"No se encontró el panel administrativo."});
+  }
   if(req.method==="GET"&&url.pathname==="/"){
     if(fs.existsSync(HTML_PATH)){res.writeHead(200,{"content-type":"text/html; charset=utf-8","cache-control":"no-cache"});return fs.createReadStream(HTML_PATH).pipe(res);}
     return send(res,500,{ok:false,error:"No se encontró public/index.html. Revisa que el archivo esté guardado en la rama main.",build:BUILD});

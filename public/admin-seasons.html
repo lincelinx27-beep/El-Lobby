@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Avalon · Administración de temporadas</title>
+<style>body{margin:0;background:#090b14;color:#f5f5fb;font:15px system-ui,sans-serif}main{max-width:900px;margin:40px auto;padding:20px}.panel{background:#121728;border:1px solid #343b55;border-radius:16px;padding:22px;margin:16px 0}h1{color:#eac36a}label{display:block;margin:12px 0 5px;color:#bbc2d6}input,select,button{font:inherit;padding:12px;border-radius:9px;border:1px solid #424966;background:#0b1020;color:#fff}input,select{width:100%;box-sizing:border-box}button{cursor:pointer;background:#eac36a;color:#17120a;font-weight:800;margin-top:12px}button.danger{background:#a83242;color:white}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#d7dbee}.muted{color:#a9b0c6}</style></head>
+<body><main><h1>Avalon · Temporadas</h1><p class="muted">Panel privado para previsualizar y archivar temporadas del Salón de la Fama.</p>
+<section class="panel"><label>Clave administrativa (AVALON_ADMIN_TOKEN)</label><input id="token" type="password" autocomplete="current-password" placeholder="Introduce la clave configurada en el servidor">
+<label>Nombre de temporada</label><input id="season" placeholder="Ej. Season 1">
+<label>Categoría</label><select id="category"><option>Origin · Jefes</option><option>Origin · Gremios</option><option>Grand Cross · Jefes</option></select>
+<button id="preview">Vista previa del ranking</button><button id="close" class="danger">Archivar temporada</button><p id="status" class="muted" role="status"></p></section>
+<section class="panel"><h2>Resultado / vista previa</h2><pre id="result">Aquí aparecerán los datos.</pre></section>
+<p class="muted">El archivo guarda una instantánea histórica en Shopify. En esta versión no elimina récords ni concede títulos a perfiles.</p></main>
+<script>
+const $=id=>document.getElementById(id);let previewData=null;
+async function call(path,opts={}){const r=await fetch(path,{...opts,headers:{...(opts.headers||{}),Authorization:"Bearer "+$("token").value,"content-type":"application/json"}});const d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||"Error de servidor");return d}
+$("preview").onclick=async()=>{try{$("status").textContent="Consultando…";previewData=await call("/api/admin/seasons/preview?"+new URLSearchParams({season:$("season").value,category:$("category").value}));$("result").textContent=JSON.stringify(previewData,null,2);$("status").textContent="Vista previa lista: "+previewData.count+" registros."}catch(e){$("status").textContent=e.message}};
+$("close").onclick=async()=>{if(!previewData||!previewData.count){$("status").textContent="Primero consulta una vista previa con registros.";return}if(!confirm("¿Archivar "+previewData.season+" ("+previewData.count+" registros)? Los registros originales se conservarán."))return;try{$("status").textContent="Guardando archivo en Shopify…";const d=await call("/api/admin/seasons/close",{method:"POST",body:JSON.stringify({season:$("season").value,category:$("category").value})});$("result").textContent=JSON.stringify(d,null,2);$("status").textContent=d.message}catch(e){$("status").textContent=e.message}};
+</script></body></html>
