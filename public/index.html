@@ -1,281 +1,111 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>El Lobby | Salón de la Fama</title>
+  <title>Avalon | Salón de la Fama</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #090b14;
-      --panel: #15192a;
-      --gold: #e8bd63;
-      --text: #f5f5fb;
-      --muted: #a5acc3;
-      --line: #30364c;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: system-ui, sans-serif;
-      background: radial-gradient(ellipse at top, #25213c, var(--bg) 65%);
-      color: var(--text);
-    }
-    header {
-      text-align: center;
-      padding: 40px 16px 30px;
-      border-bottom: 1px solid var(--line);
-    }
-    .brand {
-      color: var(--gold);
-      font-weight: 800;
-      letter-spacing: .25em;
-      font-size: 12px;
-    }
-    h1 { font-size: clamp(28px, 6vw, 44px); margin: 10px 0 4px; }
-    p { color: var(--muted); }
-    main { max-width: 1150px; margin: auto; padding: 24px 16px; }
-    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-    button, input, select {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 12px;
-      font: inherit;
-    }
-    button {
-      background: var(--panel);
-      color: var(--text);
-      cursor: pointer;
-      font-weight: 700;
-    }
-    button.active, button.primary { background: var(--gold); color: #17120a; }
-    .filters {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-    input, select { min-width: 0; width: 100%; background: #101424; color: var(--text); }
-    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; min-width: 720px; border-collapse: collapse; }
-    th, td { padding: 14px; text-align: left; border-bottom: 1px solid var(--line); }
-    th { color: var(--gold); font-size: 12px; text-transform: uppercase; }
-    .rank, .time { color: var(--gold); font-weight: 800; }
-    .status { color: var(--muted); font-size: 13px; margin: 12px 0; }
-    .empty { padding: 28px; text-align: center; color: var(--muted); }
-    .verified { color: #8ce2ae; }
-    .hidden { display: none !important; }
-    .guild-logo { width: 42px; height: 42px; object-fit: contain; border-radius: 8px; background: #0c1020; }
-    .guild-name { display: flex; align-items: center; gap: 12px; }
-    .guild-score { color: var(--gold); font-weight: 800; font-size: 1.05rem; }
-    @media (max-width: 700px) {
-      .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-    @media (max-width: 420px) {
-      .filters { grid-template-columns: 1fr; }
-    }
+    :root { color-scheme: dark; --bg:#090b14; --panel:#15192a; --gold:#e8bd63; --text:#f5f5fb; --muted:#a5acc3; --line:#30364c; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,sans-serif; background:radial-gradient(ellipse at top,#25213c,var(--bg) 65%); color:var(--text); }
+    header { text-align:center; padding:40px 16px 30px; border-bottom:1px solid var(--line); }
+    .brand { color:var(--gold); font-weight:800; letter-spacing:.25em; font-size:12px; }
+    h1 { font-size:clamp(28px,6vw,44px); margin:10px 0 4px; }
+    p { color:var(--muted); }
+    main { max-width:1150px; margin:auto; padding:24px 16px; }
+    .tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+    button,input,select { border:1px solid var(--line); border-radius:10px; padding:12px; font:inherit; }
+    button { background:var(--panel); color:var(--text); cursor:pointer; font-weight:700; }
+    button.active,button.primary { background:var(--gold); color:#17120a; }
+    .filters { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:16px; }
+    input,select { min-width:0; width:100%; background:#101424; color:var(--text); }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:16px; overflow:hidden; }
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; min-width:720px; border-collapse:collapse; }
+    th,td { padding:14px; text-align:left; border-bottom:1px solid var(--line); }
+    th { color:var(--gold); font-size:12px; text-transform:uppercase; }
+    .rank,.time { color:var(--gold); font-weight:800; }
+    .status { color:var(--muted); font-size:13px; margin:12px 0; }
+    .empty { padding:28px; text-align:center; color:var(--muted); }
+    .verified { color:#8ce2ae; }
+    .hidden { display:none!important; }
+    .guild-logo { width:42px; height:42px; object-fit:contain; border-radius:8px; background:#0c1020; }
+    .guild-name { display:flex; align-items:center; gap:12px; }
+    .guild-score { color:var(--gold); font-weight:800; font-size:1.05rem; }
+    @media(max-width:700px){.filters{grid-template-columns:repeat(2,minmax(0,1fr));}}
+    @media(max-width:420px){.filters{grid-template-columns:1fr;}}
   </style>
 </head>
 <body>
 <header>
-  <div class="brand">EL LOBBY · COMUNIDAD 7DS</div>
+  <div class="brand">AVALON · COMUNIDAD 7DS</div>
   <h1>Salón de la Fama</h1>
   <p>Récords, gremios y campeones de cada temporada.</p>
 </header>
-
 <main>
   <div class="tabs">
     <button class="active" data-game="Origin" data-category="Jefes">Origin · Jefes</button>
     <button data-game="Origin" data-category="Gremios">Origin · Gremios</button>
     <button data-game="Grand Cross" data-category="Jefes">Grand Cross · Jefes</button>
   </div>
-
   <div id="filters" class="filters">
     <input id="season" placeholder="Temporada (todas)">
     <input id="challenge" placeholder="Jefe o desafío">
-    <select id="verified">
-      <option value="false">Todos los registros</option>
-      <option value="true">Solo verificados</option>
-    </select>
+    <select id="verified"><option value="false">Todos los registros</option><option value="true">Solo verificados</option></select>
     <button id="refresh" class="primary">Actualizar tabla</button>
   </div>
-
   <div id="summary" class="status">Conectando con Shopify…</div>
-
-  <section id="leaderboardPanel" class="panel">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>#</th><th>Jugador / Gremio</th><th>Jefe o desafío</th>
-            <th>Tiempo</th><th>Temporada</th><th>Estado</th>
-          </tr>
-        </thead>
-        <tbody id="rows">
-          <tr><td colspan="6" class="empty">Cargando registros…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-  <section id="guildPanel" class="panel hidden">
-    <div class="table-wrap">
-      <table style="min-width:420px">
-        <thead><tr><th>#</th><th>Gremio</th><th>Puntuación</th></tr></thead>
-        <tbody id="guildRows"><tr><td colspan="3" class="empty">Cargando ranking de gremios…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
+  <section id="leaderboardPanel" class="panel"><div class="table-wrap"><table><thead><tr><th>#</th><th>Jugador / Gremio</th><th>Jefe o desafío</th><th>Tiempo</th><th>Temporada</th><th>Estado</th></tr></thead><tbody id="rows"><tr><td colspan="6" class="empty">Cargando registros…</td></tr></tbody></table></div></section>
+  <section id="guildPanel" class="panel hidden"><div class="table-wrap"><table style="min-width:420px"><thead><tr><th>#</th><th>Gremio</th><th>Puntuación</th></tr></thead><tbody id="guildRows"><tr><td colspan="3" class="empty">Cargando ranking de gremios…</td></tr></tbody></table></div></section>
   <p id="status" class="status"></p>
-
-  <section style="margin-top:28px">
-    <h2 style="color:var(--gold)">Catálogo de títulos</h2>
-    <p>Los títulos registrados en Shopify.</p>
-    <div class="panel"><div class="table-wrap"><table><thead><tr><th>Título</th><th>Juego</th><th>Tipo</th><th>Temporada</th><th>Descripción</th></tr></thead><tbody id="titleRows"><tr><td colspan="5" class="empty">Cargando títulos…</td></tr></tbody></table></div></div>
-  </section>
-  <section style="margin-top:28px">
-    <h2 style="color:var(--gold)">Perfiles de miembros</h2>
-    <p>Miembros registrados y sus títulos vinculados.</p>
-    <div class="panel"><div class="table-wrap"><table><thead><tr><th>Miembro</th><th>Gremio</th><th>Títulos obtenidos</th></tr></thead><tbody id="memberRows"><tr><td colspan="3" class="empty">Cargando miembros…</td></tr></tbody></table></div></div>
-  </section>
+  <section style="margin-top:28px"><h2 style="color:var(--gold)">Catálogo de títulos</h2><p>Los títulos registrados en Shopify.</p><div class="panel"><div class="table-wrap"><table><thead><tr><th>Título</th><th>Juego</th><th>Tipo</th><th>Temporada</th><th>Descripción</th></tr></thead><tbody id="titleRows"><tr><td colspan="5" class="empty">Cargando títulos…</td></tr></tbody></table></div></div></section>
+  <section style="margin-top:28px"><h2 style="color:var(--gold)">Perfiles de miembros</h2><p>Miembros registrados y sus títulos vinculados.</p><div class="panel"><div class="table-wrap"><table><thead><tr><th>Miembro</th><th>Gremio</th><th>Títulos obtenidos</th></tr></thead><tbody id="memberRows"><tr><td colspan="3" class="empty">Cargando miembros…</td></tr></tbody></table></div></div></section>
 </main>
-
 <script>
 const $ = s => document.querySelector(s);
-let game = "Origin";
-let category = "Jefes";
-
-function esc(value) {
-  return String(value ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;",
-    '"': "&quot;", "'": "&#39;"
-  }[c]));
+let game = "Origin", category = "Jefes";
+function esc(value){return String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+async function loadLeaderboard(){
+  const guildMode=game==="Origin"&&category==="Gremios";
+  $("#filters").classList.toggle("hidden",guildMode);$("#leaderboardPanel").classList.toggle("hidden",guildMode);$("#guildPanel").classList.toggle("hidden",!guildMode);
+  if(guildMode)return loadGuilds();
+  $("#rows").innerHTML='<tr><td colspan="6" class="empty">Consultando registros…</td></tr>';$("#status").textContent="";
+  const params=new URLSearchParams({game,category,verified:$("#verified").value});
+  if($("#season").value.trim())params.set("season",$("#season").value.trim());
+  if($("#challenge").value.trim())params.set("challenge",$("#challenge").value.trim());
+  try{
+    const response=await fetch("/api/leaderboard?"+params),data=await response.json();
+    if(!response.ok||!data.ok)throw new Error(data.error||"No se pudieron cargar los registros.");
+    const records=data.leaderboard||[];$("#summary").textContent=records.length+" registro(s) · "+game+" · "+category;
+    $("#rows").innerHTML=records.map(r=>'<tr><td class="rank">#'+esc(r.rank)+'</td><td><strong>'+esc(r.player||r.guild||"Sin nombre")+'</strong>'+(r.player&&r.guild?'<div class="status">'+esc(r.guild)+'</div>':"")+'</td><td>'+esc(r.challenge||"—")+'</td><td class="time">'+esc(r.formattedTime||"—")+'</td><td>'+esc(r.season||"—")+'</td><td class="'+(r.verified?"verified":"")+'">'+(r.verified?"Verificado":"Pendiente")+'</td></tr>').join("");
+    if(!records.length)$("#rows").innerHTML='<tr><td colspan="6" class="empty">No hay registros para estos filtros.</td></tr>';
+    $("#status").textContent="Consulta terminada.";
+  }catch(error){$("#summary").textContent="No se pudo conectar";$("#rows").innerHTML='<tr><td colspan="6" class="empty">No fue posible cargar los registros.</td></tr>';$("#status").textContent="Error: "+error.message;}
 }
-
-async function loadLeaderboard() {
-  const guildMode = game === "Origin" && category === "Gremios";
-  $("#filters").classList.toggle("hidden", guildMode);
-  $("#leaderboardPanel").classList.toggle("hidden", guildMode);
-  $("#guildPanel").classList.toggle("hidden", !guildMode);
-  if (guildMode) return loadGuilds();
-  $("#rows").innerHTML =
-    '<tr><td colspan="6" class="empty">Consultando registros…</td></tr>';
-  $("#status").textContent = "";
-
-  const params = new URLSearchParams({
-    game,
-    category,
-    verified: $("#verified").value
-  });
-  if ($("#season").value.trim())
-    params.set("season", $("#season").value.trim());
-  if ($("#challenge").value.trim())
-    params.set("challenge", $("#challenge").value.trim());
-
-  try {
-    const response = await fetch("/api/leaderboard?" + params);
-    const data = await response.json();
-    if (!response.ok || !data.ok)
-      throw new Error(data.error || "No se pudieron cargar los registros.");
-
-    const records = data.leaderboard || [];
-    $("#summary").textContent =
-      records.length + " registro(s) · " + game + " · " + category;
-
-    $("#rows").innerHTML = records.map(r => `
-      <tr>
-        <td class="rank">#${r.rank}</td>
-        <td><strong>${esc(r.player || r.guild || "Sin nombre")}</strong>
-          ${r.player && r.guild ? `<div class="status">${esc(r.guild)}</div>` : ""}
-        </td>
-        <td>${esc(r.challenge || "—")}</td>
-        <td class="time">${esc(r.formattedTime || "—")}</td>
-        <td>${esc(r.season || "—")}</td>
-        <td class="${r.verified ? "verified" : ""}">
-          ${r.verified ? "Verificado" : "Pendiente"}
-        </td>
-      </tr>
-    `).join("");
-
-    if (!records.length) {
-      $("#rows").innerHTML =
-        '<tr><td colspan="6" class="empty">No hay registros para estos filtros.</td></tr>';
-    }
-    $("#status").textContent = "Consulta terminada.";
-  } catch (error) {
-    $("#summary").textContent = "No se pudo conectar";
-    $("#rows").innerHTML =
-      '<tr><td colspan="6" class="empty">No fue posible cargar los registros.</td></tr>';
-    $("#status").textContent = "Error: " + error.message;
-  }
+async function loadGuilds(){
+  $("#guildRows").innerHTML='<tr><td colspan="3" class="empty">Consultando ranking de gremios…</td></tr>';$("#status").textContent="";
+  const params=new URLSearchParams({game:"Origin",verified:$("#verified").value});
+  try{
+    const response=await fetch("/api/guilds?"+params),data=await response.json();
+    if(!response.ok||!data.ok)throw new Error(data.error||"No se pudo cargar el ranking de gremios.");
+    const guilds=data.guilds||[];$("#summary").textContent=guilds.length+" gremio(s) · Origin · Ranking de gremios";
+    $("#guildRows").innerHTML=guilds.map(g=>{const logo=g.logo?'<img class="guild-logo" src="'+esc(g.logo)+'" alt="Logo de '+esc(g.name)+'" loading="lazy">':"";return '<tr><td class="rank">#'+esc(g.rank)+'</td><td><div class="guild-name">'+logo+'<strong>'+esc(g.name||"Gremio sin nombre")+'</strong></div></td><td class="guild-score">'+Number(g.score||0).toLocaleString("es-MX")+'</td></tr>';}).join("")||'<tr><td colspan="3" class="empty">Todavía no hay gremios registrados en Ranking de Gremios.</td></tr>';
+    $("#status").textContent="Ranking de gremios actualizado.";
+  }catch(error){$("#summary").textContent="No se pudo cargar el ranking de gremios";$("#guildRows").innerHTML='<tr><td colspan="3" class="empty">No fue posible cargar el ranking de gremios.</td></tr>';$("#status").textContent="Error: "+error.message+". Comprueba que el metaobjeto ranking_gremios tenga los campos configurados.";}
 }
-
-
-async function loadGuilds() {
-  $("#guildRows").innerHTML = '<tr><td colspan="3" class="empty">Consultando ranking de gremios…</td></tr>';
-  $("#status").textContent = "";
-  const params = new URLSearchParams({ game: "Origin", verified: $("#verified").value });
-  try {
-    const response = await fetch("/api/guilds?" + params);
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || "No se pudo cargar el ranking de gremios.");
-    const guilds = data.guilds || [];
-    $("#summary").textContent = guilds.length + " gremio(s) · Origin · Ranking de gremios";
-    $("#guildRows").innerHTML = guilds.map(g => {
-      const logo = g.logo ? '<img class="guild-logo" src="' + esc(g.logo) + '" alt="Logo de ' + esc(g.name) + '" loading="lazy">' : '';
-      return '<tr><td class="rank">#' + g.rank + '</td><td><div class="guild-name">' + logo + '<strong>' + esc(g.name || "Gremio sin nombre") + '</strong></div></td><td class="guild-score">' + Number(g.score || 0).toLocaleString("es-MX") + '</td></tr>';
-    }).join("") || '<tr><td colspan="3" class="empty">Todavía no hay gremios registrados en Ranking de Gremios.</td></tr>';
-    $("#status").textContent = "Ranking de gremios actualizado.";
-  } catch (error) {
-    $("#summary").textContent = "No se pudo cargar el ranking de gremios";
-    $("#guildRows").innerHTML = '<tr><td colspan="3" class="empty">No fue posible cargar el ranking de gremios.</td></tr>';
-    $("#status").textContent = "Error: " + error.message + ". Comprueba que el metaobjeto ranking_gremios tenga los campos configurados.";
-  }
+document.querySelectorAll(".tabs button").forEach(button=>button.addEventListener("click",()=>{document.querySelectorAll(".tabs button").forEach(b=>b.classList.remove("active"));button.classList.add("active");game=button.dataset.game;category=button.dataset.category;loadLeaderboard();}));
+$("#refresh").addEventListener("click",loadLeaderboard);$("#verified").addEventListener("change",loadLeaderboard);
+$("#season").addEventListener("keydown",e=>{if(e.key==="Enter")loadLeaderboard();});$("#challenge").addEventListener("keydown",e=>{if(e.key==="Enter")loadLeaderboard();});
+async function loadCatalog(){
+  try{
+    const [tr,mr]=await Promise.all([fetch("/api/titles"),fetch("/api/members")]),td=await tr.json(),md=await mr.json();
+    if(!tr.ok||!td.ok)throw Error(td.error||"No se pudieron cargar los títulos");if(!mr.ok||!md.ok)throw Error(md.error||"No se pudieron cargar los miembros");
+    const field=(obj,...keys)=>{for(const k of keys)if(obj[k])return obj[k];return "—";};
+    $("#titleRows").innerHTML=(td.titles||[]).map(t=>{const x=t.fields||{};return '<tr><td><strong>'+esc(field(x,"nombre_de_titulo","nombre_de_título","nombre_del_titulo","nombre_del_título"))+'</strong></td><td>'+esc(field(x,"juego"))+'</td><td>'+esc(field(x,"tipo_de_titulo","tipo_de_título","tipo_de_titulo_"))+'</td><td>'+esc(field(x,"temporada"))+'</td><td>'+esc(field(x,"descripcion","descripción"))+'</td></tr>';}).join("")||'<tr><td colspan="5" class="empty">Todavía no hay títulos en el catálogo.</td></tr>';
+    $("#memberRows").innerHTML=(md.members||[]).map(m=>{const x=m.fields||{};return '<tr><td><strong>'+esc(field(x,"nombre_del_miembro","nombre_de_miembro","nombre_del_miembro_"))+'</strong></td><td>'+esc(field(x,"gremio"))+'</td><td>'+esc(field(x,"titulos_obtenidos","títulos_obtenidos","titulos_obtenidos_","títulos_obtenidos_"))+'</td></tr>';}).join("")||'<tr><td colspan="3" class="empty">Todavía no hay perfiles de miembros.</td></tr>';
+  }catch(e){$("#titleRows").innerHTML='<tr><td colspan="5" class="empty">Error cargando el catálogo: '+esc(e.message)+'</td></tr>';$("#memberRows").innerHTML='<tr><td colspan="3" class="empty">Error cargando perfiles: '+esc(e.message)+'</td></tr>';}
 }
-
-document.querySelectorAll(".tabs button").forEach(button => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
-    button.classList.add("active");
-    game = button.dataset.game;
-    category = button.dataset.category;
-    loadLeaderboard();
-  });
-});
-
-$("#refresh").addEventListener("click", loadLeaderboard);
-$("#verified").addEventListener("change", loadLeaderboard);
-$("#season").addEventListener("keydown", e => {
-  if (e.key === "Enter") loadLeaderboard();
-});
-$("#challenge").addEventListener("keydown", e => {
-  if (e.key === "Enter") loadLeaderboard();
-});
-
-
-async function loadCatalog() {
-  try {
-    const [tr, mr] = await Promise.all([fetch("/api/titles"), fetch("/api/members")]);
-    const td = await tr.json(), md = await mr.json();
-    if (!tr.ok || !td.ok) throw Error(td.error || "No se pudieron cargar los títulos");
-    if (!mr.ok || !md.ok) throw Error(md.error || "No se pudieron cargar los miembros");
-    const field = (obj, ...keys) => { for (const k of keys) if (obj[k]) return obj[k]; return "—"; };
-    $("#titleRows").innerHTML = (td.titles || []).map(t => {
-      const x = t.fields || {};
-      return '<tr><td><strong>' + esc(field(x,"nombre_de_titulo","nombre_de_título","nombre_del_titulo","nombre_del_título")) + '</strong></td><td>' + esc(field(x,"juego")) + '</td><td>' + esc(field(x,"tipo_de_titulo","tipo_de_título","tipo_de_titulo_")) + '</td><td>' + esc(field(x,"temporada")) + '</td><td>' + esc(field(x,"descripcion","descripción")) + '</td></tr>';
-    }).join("") || '<tr><td colspan="5" class="empty">Todavía no hay títulos en el catálogo.</td></tr>';
-    $("#memberRows").innerHTML = (md.members || []).map(m => {
-      const x = m.fields || {};
-      return '<tr><td><strong>' + esc(field(x,"nombre_del_miembro","nombre_de_miembro","nombre_del_miembro_")) + '</strong></td><td>' + esc(field(x,"gremio")) + '</td><td>' + esc(field(x,"titulos_obtenidos","títulos_obtenidos","titulos_obtenidos_","títulos_obtenidos_")) + '</td></tr>';
-    }).join("") || '<tr><td colspan="3" class="empty">Todavía no hay perfiles de miembros.</td></tr>';
-  } catch (e) {
-    $("#titleRows").innerHTML = '<tr><td colspan="5" class="empty">Error cargando el catálogo: ' + esc(e.message) + '</td></tr>';
-    $("#memberRows").innerHTML = '<tr><td colspan="3" class="empty">Error cargando perfiles: ' + esc(e.message) + '</td></tr>';
-  }
-}
-loadLeaderboard();
-loadCatalog();
+loadLeaderboard();loadCatalog();
 </script>
 </body>
 </html>
