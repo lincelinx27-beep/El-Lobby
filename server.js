@@ -48,19 +48,21 @@ async function fetchMetaobjects(type,limit=250){
 }
 function normalizeGame(value){
   const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]/g,"");
-  if(["origin","7dso","7dsorigin","thesevendeadlysinsorigin"].includes(normalized))return "origin";
-  if(["grandcross","7dsgc","7dsgrandcross"].includes(normalized))return "grandcross";
+  if(["origin","7dso","7dsorigin","thesevendeadlysinsorigin","7origing"].includes(normalized))return "origin";
+  if(["grandcross","7dsgc","7dsgrandcross","7gc"].includes(normalized))return "grandcross";
   return normalized;
 }
 function normalizeCategory(value){
   const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[·•—–]/g," ").replace(/\\s+/g," ").trim();
-  if(["jefes","origin jefes"].includes(normalized))return "jefes";
-  if(["gremios","origin gremios"].includes(normalized))return "gremios";
-  return normalized;
+  const compact=normalized.replace(/[^a-z0-9]/g,"");
+  if(["7origin","origin","jefes","originjefes","7dsorigin","7dso"].includes(compact))return "7origin";
+  if(["7origing","gremios","origingremios","gremiosorigin"].includes(compact))return "7origing";
+  if(["7gc","grandcross","grandcrossjefes","jefesgrandcross"].includes(compact))return "7gc";
+  return compact;
 }
 function filterLeaderboard(records,params){
   const game=normalizeGame(params.get("game")),category=normalizeCategory(params.get("category")),season=clean(params.get("season")).toLowerCase(),challenge=clean(params.get("challenge")).toLowerCase(),verifiedOnly=params.get("verified")==="true";
-  return records.filter(r=>!game||normalizeGame(r.game)===game).filter(r=>!category||normalizeCategory(r.category)===category).filter(r=>!season||r.season.toLowerCase()===season).filter(r=>!challenge||r.challenge.toLowerCase()===challenge).filter(r=>!verifiedOnly||r.verified).sort((a,b)=>{if(a.timeMs>0&&b.timeMs>0&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;if(a.timeMs>0&&b.timeMs<=0)return -1;if(a.timeMs<=0&&b.timeMs>0)return 1;return b.score-a.score;}).map((r,index)=>({rank:index+1,...r,formattedTime:r.timeMs>0?`${r.minutes}:${String(r.seconds).padStart(2,"0")}.${String(r.milliseconds).padStart(3,"0")}`:null}));
+  return records.filter(r=>!category||normalizeCategory(r.category)===category).filter(r=>category||!game||normalizeGame(r.game)===game).filter(r=>!season||r.season.toLowerCase()===season).filter(r=>!challenge||r.challenge.toLowerCase()===challenge).filter(r=>!verifiedOnly||r.verified).sort((a,b)=>{if(a.timeMs>0&&b.timeMs>0&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;if(a.timeMs>0&&b.timeMs<=0)return -1;if(a.timeMs<=0&&b.timeMs>0)return 1;return b.score-a.score;}).map((r,index)=>({rank:index+1,...r,formattedTime:r.timeMs>0?`${r.minutes}:${String(r.seconds).padStart(2,"0")}.${String(r.milliseconds).padStart(3,"0")}`:null}));
 }
 const server=http.createServer(async(req,res)=>{
   const adminHandled = await handleSeasonAdmin(req,res,new URL(req.url,APP_URL||"http://localhost"),{send,clean,shopifyQuery,fetchMetaobjects,normalizeRecord,filterLeaderboard});
