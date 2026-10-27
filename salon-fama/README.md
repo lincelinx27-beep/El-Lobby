@@ -1,4 +1,4 @@
-# Gestor del Salón de la Fama de Avalon
+# Avalon — Salón de la Fama
 
 Este directorio documenta y prepara la integración del Salón de la Fama de Avalon con Shopify.
 
