@@ -26,7 +26,7 @@ El Salón de la Fama necesita el servicio Node.js desplegado por separado. Para 
 
 ## Nota de marca
 
-El nombre público de la comunidad es **Avalon**. El nombre del repositorio de GitHub sigue siendo `El-Lobby` hasta que se renombre manualmente en Settings. El nombre del servicio de Render puede seguir siendo `el-lobby` sin afectar la marca visible.
+El nombre público de la comunidad es **Avalon**. El nombre del repositorio debe reflejar la identidad Avalon; el cambio de nombre del repositorio se gestiona desde GitHub Settings. El nombre técnico del servicio de Render puede seguir siendo `el-lobby` sin afectar la marca visible.
 
 ## Aviso
 
