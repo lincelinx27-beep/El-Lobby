@@ -14,7 +14,7 @@ Sitio web comunitario para fans de **The Seven Deadly Sins: Origin**, **Grand Cr
 
 La portada estática puede publicarse con GitHub Pages desde `main` y `/(root)`.
 
-El Salón de la Fama necesita el servicio Node.js desplegado por separado. Para mostrar las clasificaciones, el iframe de Shopify debe apuntar al servicio Render configurado: `https://el-lobby.onrender.com/`.
+El Salón de la Fama necesita el servicio Node.js desplegado por separado. Para mostrar las clasificaciones, el iframe de Shopify debe apuntar al servicio Render configurado: `https://el-lobby.onrender.com/` (endpoint técnico actual; no representa el nombre público de la comunidad)..
 
 ## Rutas API del servicio
 
