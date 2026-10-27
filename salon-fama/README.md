@@ -1,18 +1,18 @@
-# Gestor del Salón de la Fama de El Lobby
+# Gestor del Salón de la Fama de Avalon
 
-Este directorio documenta y prepara la integración del Salón de la Fama con Shopify.
+Este directorio documenta y prepara la integración del Salón de la Fama de Avalon con Shopify.
 
 ## Componentes planeados
 
 - Registro de competición: resultados de Origin · Jefes, Origin · Gremios y Grand Cross · Jefes.
-- Catálogo de títulos: títulos oficiales, históricos y exclusivos de El Lobby.
+- Catálogo de títulos: títulos oficiales, históricos y exclusivos de Avalon.
 - Perfil de miembro: relación de miembros con sus títulos obtenidos.
 - Ordenamiento de tiempos de menor a mayor usando minutos, segundos y milisegundos.
 - Cierre de temporada con asignación permanente de títulos al perfil del miembro.
 
 ## Estado
 
-Este repositorio contiene el sitio estático de El Lobby. La integración con Shopify requiere un servidor seguro para OAuth y Admin API; no debe implementarse exponiendo tokens en archivos del tema, JavaScript del navegador o el repositorio.
+Este repositorio contiene el sitio estático de Avalon. La integración con Shopify requiere un servidor seguro para OAuth y Admin API; no debe implementarse exponiendo tokens en archivos del tema, JavaScript del navegador o el repositorio.
 
 ## Próximos pasos
 
