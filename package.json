@@ -1,8 +1,8 @@
 {
-  "name": "el-lobby-gestor",
-  "version": "0.1.0",
+  "name": "avalon-hall-of-fame",
+  "version": "0.2.0",
   "private": true,
-  "description": "Servidor inicial para el Gestor del Salón de la Fama de El Lobby",
+  "description": "Servidor para el gestor del Salón de la Fama de Avalon",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
