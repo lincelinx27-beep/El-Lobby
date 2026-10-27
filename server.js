@@ -51,7 +51,7 @@ function filterLeaderboard(records,params){
   return records.filter(r=>!game||r.game.toLowerCase()===game).filter(r=>!category||r.category.toLowerCase()===category).filter(r=>!season||r.season.toLowerCase()===season).filter(r=>!challenge||r.challenge.toLowerCase()===challenge).filter(r=>!verifiedOnly||r.verified).sort((a,b)=>{if(a.timeMs>0&&b.timeMs>0&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;if(a.timeMs>0&&b.timeMs<=0)return -1;if(a.timeMs<=0&&b.timeMs>0)return 1;return b.score-a.score;}).map((r,index)=>({rank:index+1,...r,formattedTime:r.timeMs>0?`${r.minutes}:${String(r.seconds).padStart(2,"0")}.${String(r.milliseconds).padStart(3,"0")}`:null}));
 }
 const server=http.createServer(async(req,res)=>{
-  const adminHandled = await handleSeasonAdmin(req,res,new URL(req.url,APP_URL||"http://localhost"));
+  const adminHandled = await handleSeasonAdmin(req,res,new URL(req.url,APP_URL||"http://localhost"),{send,clean,shopifyQuery,fetchMetaobjects,normalizeRecord,filterLeaderboard});
   if (adminHandled) return;
   const url=new URL(req.url,APP_URL||"http://localhost");
   if(req.method==="OPTIONS"){res.writeHead(204,{"access-control-allow-origin":"*","access-control-allow-methods":"GET, OPTIONS","access-control-allow-headers":"content-type"});return res.end();}
