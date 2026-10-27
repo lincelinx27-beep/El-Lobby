@@ -22,7 +22,7 @@ async function createSeasonArchive(name, category, ranking) {
   if (errors.length) throw new Error(errors.map(e => e.message).join("; "));
   return result.metaobjectCreate.metaobject;
 }
-async function handleSeasonAdmin(req,res,url) {
+async function handleSeasonAdmin(req,res,url,deps) {\n  const { send, clean, shopifyQuery, fetchMetaobjects, normalizeRecord, filterLeaderboard } = deps;
   if (!url.pathname.startsWith("/api/admin/seasons")) return false;
   if (!ADMIN_TOKEN) { send(res,503,{ok:false,error:"Falta configurar AVALON_ADMIN_TOKEN en el servidor."}); return true; }
   if (!authorized(req)) { send(res,401,{ok:false,error:"Acceso denegado. Introduce la clave de administrador."}); return true; }
