@@ -14,7 +14,7 @@ Sitio web comunitario para fans de **The Seven Deadly Sins: Origin**, **Grand Cr
 
 La portada estática puede publicarse con GitHub Pages desde `main` y `/(root)`.
 
-El Salón de la Fama necesita el servicio Node.js desplegado por separado. Para mostrar las clasificaciones, el iframe de Shopify debe apuntar al servicio Render configurado: `https://backend.onrender.com/` (URL técnica del backend) (endpoint técnico actual; no representa el nombre público de la comunidad)..
+El Salón de la Fama necesita el servicio Node.js desplegado por separado. Para mostrar las clasificaciones, el iframe de Shopify debe apuntar al servicio Render configurado: `https://el-lobby.onrender.com/` (dirección técnica actual del servicio Render; la marca visible del proyecto es Avalon)..
 
 ## Rutas API del servicio
 
@@ -26,7 +26,7 @@ El Salón de la Fama necesita el servicio Node.js desplegado por separado. Para 
 
 ## Nota de marca
 
-El nombre público de la comunidad es **Avalon**. El nombre del repositorio debe reflejar la identidad Avalon; el cambio de nombre del repositorio se gestiona desde GitHub Settings. El servicio de Render conserva su URL técnica; la marca pública del proyecto es Avalon.
+El nombre público de la comunidad es **Avalon**. El servicio de Render conserva su URL técnica de implementación; la marca pública y visible del proyecto es Avalon.
 
 ## Aviso
 
