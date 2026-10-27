@@ -1,4 +1,4 @@
-# El Lobby
+# Avalon
 
 Sitio web comunitario para fans de **The Seven Deadly Sins: Origin**, **Grand Cross**, el anime y el manga. Proyecto independiente y no oficial.
 
@@ -7,6 +7,7 @@ Sitio web comunitario para fans de **The Seven Deadly Sins: Origin**, **Grand Cr
 - `index.html`: estructura y contenido de la página principal.
 - `styles.css`: diseño adaptable a móviles y escritorio.
 - `script.js`: menú móvil y año del pie de página.
+- `public/index.html`: Salón de la Fama, tabla de récords, gremios, catálogo de títulos y perfiles de miembros.
 
 ## Publicar con GitHub Pages
 
@@ -16,7 +17,7 @@ Sitio web comunitario para fans de **The Seven Deadly Sins: Origin**, **Grand Cr
 4. Selecciona la rama `main` y la carpeta `/(root)`.
 5. Pulsa **Save** y espera a que GitHub publique el sitio.
 
-Esta primera versión no necesita Node.js ni un proceso de compilación.
+Esta primera versión no necesita Node.js ni un proceso de compilación para la página estática principal.
 
 ## Próximos pasos
 
@@ -27,4 +28,4 @@ Esta primera versión no necesita Node.js ni un proceso de compilación.
 
 ## Aviso
 
-El Lobby es un proyecto de fans independiente y no está afiliado oficialmente con Netmarble ni con los titulares de la franquicia The Seven Deadly Sins.
+Avalon es un proyecto de fans independiente y no está afiliado oficialmente con Netmarble ni con los titulares de la franquicia The Seven Deadly Sins.
