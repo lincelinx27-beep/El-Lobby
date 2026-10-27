@@ -1,8 +1,8 @@
 {
-  "name": "avalon-hall-of-fame",
+  "name": "avalon-community-site",
   "version": "0.2.0",
   "private": true,
-  "description": "Servidor para el gestor del Salón de la Fama de Avalon",
+  "description": "Sitio y servicios de la comunidad Avalon",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
