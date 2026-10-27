@@ -2,29 +2,31 @@
 
 Sitio web comunitario para fans de **The Seven Deadly Sins: Origin**, **Grand Cross**, el anime y el manga. Proyecto independiente y no oficial.
 
-## Archivos
+## Estructura del proyecto
 
-- `index.html`: estructura y contenido de la página principal.
-- `styles.css`: diseño adaptable a móviles y escritorio.
+- `index.html`: portada de Avalon, novedades y accesos al universo 7DS.
+- `styles.css`: estilos de la página principal.
 - `script.js`: menú móvil y año del pie de página.
-- `public/index.html`: Salón de la Fama, tabla de récords, gremios, catálogo de títulos y perfiles de miembros.
+- `public/index.html`: Salón de la Fama, clasificación, gremios, catálogo de títulos y perfiles.
+- `server.js`: servidor Node.js que expone las rutas API del ranking y conecta con Shopify.
 
-## Publicar con GitHub Pages
+## Publicación
 
-1. Entra a **Settings** del repositorio.
-2. Abre **Pages** en el menú.
-3. En **Build and deployment**, elige **Deploy from a branch**.
-4. Selecciona la rama `main` y la carpeta `/(root)`.
-5. Pulsa **Save** y espera a que GitHub publique el sitio.
+La portada estática puede publicarse con GitHub Pages desde `main` y `/(root)`.
 
-Esta primera versión no necesita Node.js ni un proceso de compilación para la página estática principal.
+El Salón de la Fama necesita el servicio Node.js desplegado por separado. Para mostrar las clasificaciones, el iframe de Shopify debe apuntar al servicio Render configurado: `https://el-lobby.onrender.com/`.
 
-## Próximos pasos
+## Rutas API del servicio
 
-- Crear un sistema cómodo para publicar noticias y editar categorías.
-- Añadir páginas de noticias con galerías de imágenes.
-- Incorporar Salón de la Fama, gremios, guías y eventos.
-- Preparar la conexión con un dominio propio.
+- `/health` y `/version`: comprobar estado y versión.
+- `/api/leaderboard`: clasificación de récords.
+- `/api/guilds`: ranking de gremios.
+- `/api/titles`: catálogo de títulos.
+- `/api/members`: perfiles de miembros.
+
+## Nota de marca
+
+El nombre público de la comunidad es **Avalon**. El nombre del repositorio de GitHub sigue siendo `El-Lobby` hasta que se renombre manualmente en Settings. El nombre del servicio de Render puede seguir siendo `el-lobby` sin afectar la marca visible.
 
 ## Aviso
 
