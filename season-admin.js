@@ -119,6 +119,43 @@ async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
   }
   return matches[0];
 }
+async function createEarnedTitleRecord(shopifyQuery, member, catalogTitle, row, category, seasonName) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const def = defs.find(item => norm(item.type) === norm("titulo_obtenido")) || defs.find(item => norm(item.name).includes("titulo") && norm(item.name).includes("obtenido"));
+  if (!def?.id) throw new Error("No se encontró la definición Título Obtenido; no se eliminaron registros de competición.");
+  const fieldsDef = def.fieldDefinitions || [];
+  const find = aliases => fieldsDef.find(field => aliases.includes(norm(field.key)) || aliases.includes(norm(field.name)));
+  const titleRef = find(["titulo", "titulobase", "titulodecatalogo", "titulodelcatalogo", "referenciaaltitulo"]);
+  const memberRef = find(["miembro", "perfil", "perfilmiembro", "miembroreferido"]);
+  const memberIdField = find(["identificadordemiembro", "identificadormiembro"]);
+  const memberNameField = find(["nombredelmiembro", "nombrede miembro", "miembro"]);
+  const guildField = find(["gremio", "nombredelgremio"]);
+  const gameField = find(["juego", "juegoprincipal"]);
+  const categoryField = find(["categoria"]);
+  const rankField = find(["puesto", "posicion", "ranking", "lugar"]);
+  const seasonField = find(["temporada", "nombredelatemporada"]);
+  const dateField = find(["fecha", "fechadeobtencion", "fechaobtencion"]);
+  const fields = [];
+  if (titleRef) fields.push({ key: titleRef.key, value: catalogTitle.id });
+  if (memberRef) fields.push({ key: memberRef.key, value: member.id });
+  if (memberIdField) fields.push({ key: memberIdField.key, value: memberIdentifier(memberFieldMap(member)) });
+  if (memberNameField) fields.push({ key: memberNameField.key, value: clean(row.player) });
+  if (guildField) fields.push({ key: guildField.key, value: clean(row.guild) });
+  if (gameField) fields.push({ key: gameField.key, value: category.toLowerCase().includes("grand cross") ? "Grand Cross" : "Origin" });
+  if (categoryField) fields.push({ key: categoryField.key, value: category });
+  if (rankField) fields.push({ key: rankField.key, value: String(row.rank) });
+  if (seasonField) fields.push({ key: seasonField.key, value: seasonName });
+  if (dateField) fields.push({ key: dateField.key, value: new Date().toISOString() });
+  if (!titleRef && !memberIdField && !memberRef) throw new Error("Título Obtenido no tiene campos compatibles para guardar título y miembro.");
+  const handle = "titulo-" + memberIdentifier(memberFieldMap(member)).toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now() + "-" + row.rank;
+  const created = await shopifyQuery('mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: $type, handle: $handle, fields: $fields }) { metaobject { id handle } userErrors { field message } } }', { type: def.type, handle, fields });
+  const errors = created?.metaobjectCreate?.userErrors || [];
+  if (errors.length || !created?.metaobjectCreate?.metaobject) throw new Error("No se pudo guardar el título obtenido para " + member.handle + ": " + errors.map(e => e.message).join("; "));
+  return created.metaobjectCreate.metaobject;
+}
+
 async function updateMemberTitles(shopifyQuery, member, awardTitleMetaobject) {
   const fieldDefinition = await ensureMemberTitlesDefinition(shopifyQuery);
   const key = fieldDefinition.key;
@@ -379,8 +416,9 @@ async function buildPreview(category) {
           const title = clean(data.title) || titleForRank(row.rank, category, "");
           const titleMetaobject = await resolveCatalogTitle(shopifyQuery, title);
           console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle + " title=" + titleMetaobject.handle);
-          const result = await updateMemberTitles(shopifyQuery, member, titleMetaobject);
-          awards.push({ rank: row.rank, player: row.player, memberId, title, titleId: titleMetaobject.id, updated: result.updated, reason: result.reason || null });
+          const earnedTitle = await createEarnedTitleRecord(shopifyQuery, member, titleMetaobject, row, category, clean(data.seasonName) || category);
+          const result = await updateMemberTitles(shopifyQuery, member, earnedTitle);
+          awards.push({ rank: row.rank, player: row.player, memberId, title, catalogTitleId: titleMetaobject.id, earnedTitleId: earnedTitle.id, updated: result.updated, reason: result.reason || null });
         }
 
         // Delete only the competition records selected for this category, after all titles were saved.
