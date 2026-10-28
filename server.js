@@ -77,19 +77,16 @@ async function fetchMetaobjects(type,limit=250){
   return all.slice(0,limit);
 }
 function normalizeGame(value){
-  const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]/g,"");
-  // Valores del campo Shopify "Juego": 7DS:O = Origin; 7DS:GC = Grand Cross.
-  if(["origin","7dso","7dsorigin","thesevendeadlysinsorigin","7origing"].includes(normalized))return "origin";
-  if(["grandcross","7dsgc","7dsgrandcross","7gc"].includes(normalized))return "grandcross";
+  const normalized=clean(value).toUpperCase().replace(/\\s+/g,"").replace(/：/g,":");
+  // Valores reales del campo Juego en los metaobjetos.
+  if(normalized==="7DS:O")return "7DS:O";
+  if(normalized==="7DS:GC")return "7DS:GC";
+  if(normalized==="OTRO")return "OTRO";
   return normalized;
 }
 function normalizeCategory(value){
-  const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[·•—–]/g," ").replace(/\\s+/g," ").trim();
-  const compact=normalized.replace(/[^a-z0-9]/g,"");
-  if(["7origin","origin","jefes","originjefes","7dsorigin","7dso"].includes(compact))return "7origin";
-  if(["7origing","gremios","origingremios","gremiosorigin"].includes(compact))return "7origing";
-  if(["7gc","grandcross","grandcrossjefes","jefesgrandcross"].includes(compact))return "7gc";
-  return compact;
+  // Categoría se toma directamente del metaobjeto; normalizamos solo espacios y mayúsculas.
+  return clean(value).normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/\\s+/g," ").trim().toUpperCase();
 }
 function filterLeaderboard(records,params){
   const game=normalizeGame(params.get("game"));
