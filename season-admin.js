@@ -72,24 +72,45 @@ function titleForRank(rank, category, customTitle) {
   return distinction + " · " + category;
 }
 
+async function ensureMemberTitlesDefinition(shopifyQuery) {
+  const definitionResult = await shopifyQuery(
+    'query { metaobjectDefinitionByType(type: "perfil_de_miembro") { id type fieldDefinitions { key name type { name } } } }'
+  );
+  const definition = definitionResult?.metaobjectDefinitionByType;
+  if (!definition?.id) {
+    throw new Error("TÍTULOS / perfil_de_miembro: no se encontró la definición del metaobjeto. No se modificó ningún perfil.");
+  }
+
+  const possibleKeys = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"];
+  let fieldDefinition = (definition.fieldDefinitions || []).find(field => possibleKeys.includes(field.key));
+  if (fieldDefinition) return fieldDefinition;
+
+  // The merchant's member-profile definition has no award field yet. Add it to
+  // that existing definition instead of assuming the field already exists.
+  const update = await shopifyQuery(
+    'mutation($id: ID!, $fields: [MetaobjectFieldDefinitionInput!]!) { metaobjectDefinitionUpdate(id: $id, definition: { fieldDefinitions: $fields }) { metaobjectDefinition { id fieldDefinitions { key name type { name } } } userErrors { field message } } }',
+    { id: definition.id, fields: [{ key: "titulos_obtenidos", name: "Títulos Obtenidos", type: "list.single_line_text_field" }] }
+  );
+  const errors = update?.metaobjectDefinitionUpdate?.userErrors || [];
+  if (errors.length) {
+    throw new Error("TÍTULOS / no se pudo añadir el campo Títulos Obtenidos a Perfil de Miembro: " + errors.map(error => error.message).join("; ") + ". No se modificó ningún perfil ni se eliminaron registros.");
+  }
+  fieldDefinition = (update?.metaobjectDefinitionUpdate?.metaobjectDefinition?.fieldDefinitions || []).find(field => field.key === "titulos_obtenidos");
+  if (!fieldDefinition) {
+    throw new Error("TÍTULOS / Shopify no confirmó la creación del campo titulos_obtenidos. No se modificó ningún perfil ni se eliminaron registros.");
+  }
+  return fieldDefinition;
+}
+
 async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   const fields = memberFieldMap(member);
-  const fieldKey = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"].find(key => fields[key] !== undefined);
-  if (!fieldKey) {
-    throw new Error("TÍTULOS / perfil_de_miembro/" + member.handle + ": no se encontró la clave del campo Títulos Obtenidos. Campos disponibles: " + Object.keys(fields).join(", "));
-  }
-
-  const definition = await shopifyQuery(
-    'query { metaobjectDefinitionByType(type: "perfil_de_miembro") { fieldDefinitions { key type { name } } } }'
-  );
-  const fieldDefinition = (definition?.metaobjectDefinitionByType?.fieldDefinitions || []).find(field => field.key === fieldKey);
+  const fieldDefinition = await ensureMemberTitlesDefinition(shopifyQuery);
+  const fieldKey = fieldDefinition.key;
   const fieldType = String(fieldDefinition?.type?.name || "").toLowerCase();
   if (!fieldType) {
-    throw new Error("TÍTULOS / perfil_de_miembro/" + member.handle + ": Shopify no devolvió el tipo de campo para " + fieldKey + ". No se modificó el perfil ni se eliminaron registros.");
+    throw new Error("TÍTULOS / perfil_de_miembro/" + member.handle + ": Shopify no devolvió el tipo del campo " + fieldKey + ". No se modificó el perfil ni se eliminaron registros.");
   }
 
-  // Shopify metaobject JSON fields require a JSON document, not a raw string.
-  // list.* values are also sent as serialized JSON arrays. Text fields remain text.
   const isList = fieldType.startsWith("list.");
   const isJson = fieldType === "json";
   const needsJsonEncoding = isList || isJson;
@@ -99,18 +120,10 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   if (needsJsonEncoding) {
     try {
       const parsed = JSON.parse(raw || "[]");
-      if (Array.isArray(parsed)) {
-        titles = parsed.map(value => String(value).trim()).filter(Boolean);
-      } else if (parsed && typeof parsed === "object") {
-        // JSON is a structured field; don't discard existing values silently.
-        titles = existingTitles(raw);
-      } else if (typeof parsed === "string" && parsed.trim()) {
-        titles = [parsed.trim()];
-      } else {
-        titles = [];
-      }
+      if (Array.isArray(parsed)) titles = parsed.map(value => String(value).trim()).filter(Boolean);
+      else if (typeof parsed === "string" && parsed.trim()) titles = [parsed.trim()];
+      else titles = existingTitles(raw);
     } catch {
-      // Preserve legacy delimiter-separated values already stored before this field was JSON-typed.
       titles = existingTitles(raw);
     }
   } else {
@@ -123,13 +136,7 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
 
   const updatedTitles = [...titles, awardTitle];
   const nextValue = needsJsonEncoding ? JSON.stringify(updatedTitles) : updatedTitles.join(" | ");
-  if (needsJsonEncoding) {
-    try {
-      JSON.parse(nextValue);
-    } catch (error) {
-      throw new Error("TÍTULOS / " + fieldKey + ": no se pudo construir JSON válido. No se modificó el perfil.");
-    }
-  }
+  if (needsJsonEncoding) JSON.parse(nextValue);
 
   const result = await shopifyQuery(
     'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
@@ -143,8 +150,6 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   if (!saved) {
     throw new Error("TÍTULOS / metaobjectUpdate perfil_de_miembro/" + member.handle + ": Shopify no confirmó la actualización. No se eliminaron registros de competición.");
   }
-
-  // Confirm Shopify persisted the title before the close flow can delete any competition records.
   const savedField = (saved.fields || []).find(field => field.key === fieldKey);
   if (!savedField || savedField.value !== nextValue) {
     throw new Error("TÍTULOS / perfil_de_miembro/" + member.handle + ": Shopify no devolvió el valor guardado esperado. No se eliminaron registros de competición.");
