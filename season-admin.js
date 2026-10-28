@@ -94,30 +94,30 @@ async function ensureMemberTitlesDefinition(shopifyQuery) {
 async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
   const wanted = String(requestedTitle || "").trim();
   if (!wanted) throw new Error("No se especificó el título a otorgar.");
-  const nodes = await (async () => {
-    const all = []; let after = null;
-    while (all.length < 250) {
-      const data = await shopifyQuery(
-        'query($after: String) { metaobjects(type: "catalogo_de_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
-        { after }
-      );
-      const conn = data.metaobjects; all.push(...conn.nodes || []);
-      if (!conn.pageInfo?.hasNextPage || !conn.pageInfo.endCursor) break;
-      after = conn.pageInfo.endCursor;
-    }
-    return all;
-  })();
-  const norm = value => String(value || "").trim().toLocaleLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "");
-  const matches = nodes.filter(node => {
-    const name = (node.fields || []).find(field => norm(field.key) === norm("Nombre de Título") || norm(field.key) === norm("nombre_de_titulo") || norm(field.key) === "name");
+  const all = []; let after = null;
+  while (all.length < 250) {
+    const data = await shopifyQuery(
+      'query($after: String) { metaobjects(type: "catalogo_de_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
+      { after }
+    );
+    const conn = data.metaobjects; all.push(...conn.nodes || []);
+    if (!conn.pageInfo?.hasNextPage || !conn.pageInfo.endCursor) break;
+    after = conn.pageInfo.endCursor;
+  }
+  const norm = value => String(value || "").trim().toLocaleLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const matches = all.filter(node => {
+    const name = (node.fields || []).find(field =>
+      ["nombre", "nombre_de_titulo", "nombre_del_titulo", "titulo", "titulo_del_catalogo", "name", "title"].includes(norm(field.key))
+    );
     return name && norm(name.value) === norm(wanted);
   });
   if (matches.length !== 1) {
-    throw new Error(matches.length ? "El catálogo contiene más de una entrada para el título '" + wanted + "'. Corrige los duplicados antes de cerrar." : "No se encontró '" + wanted + "' en Catálogo de Títulos (catalogo_de_titulos). Añade la entrada y vuelve a intentarlo. No se eliminaron registros.");
+    throw new Error(matches.length
+      ? "El catálogo contiene más de una entrada para el título '" + wanted + "'. Corrige los duplicados antes de cerrar."
+      : "No se encontró '" + wanted + "' en Catálogo de Títulos (catalogo_de_titulos). Revisa el campo Nombre de la definición y la entrada del catálogo. No se eliminaron registros.");
   }
   return matches[0];
 }
-
 async function updateMemberTitles(shopifyQuery, member, awardTitleMetaobject) {
   const fieldDefinition = await ensureMemberTitlesDefinition(shopifyQuery);
   const key = fieldDefinition.key;
