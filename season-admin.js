@@ -53,7 +53,8 @@ function memberIdentifier(fields) {
 }
 
 function existingTitles(raw) {
-  return String(raw || "").split(/\s*[|;\n]\s*/).map(v => v.trim()).filter(Boolean);
+  return String(raw || "").split(/\s*[|;
+]\s*/).map(v => v.trim()).filter(Boolean);
 }
 
 async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
@@ -215,7 +216,8 @@ async function handleSeasonAdmin(req, res, url, deps) {
         }
 
         // Reuse an interrupted processing archive so a retry won't create duplicates.
-        console.log("[Avalon admin] etapa=archivo category=" + category + " registros=" + ranking.length);\n        const archive = matchingArchive || await createSeasonArchive(shopifyQuery, archiveName, category, ranking);
+        console.log("[Avalon admin] etapa=archivo category=" + category + " registros=" + ranking.length);
+        const archive = matchingArchive || await createSeasonArchive(shopifyQuery, archiveName, category, ranking);
         await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
         const awards = [];
         try {
@@ -223,7 +225,8 @@ async function handleSeasonAdmin(req, res, url, deps) {
             const memberId = memberIdentifier(row.fields || {});
             const member = byId.get(memberId.toLocaleLowerCase());
             const title = titleForRank(row.rank, category, clean(data.title));
-            console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle);\n            const result = await updateMemberTitles(shopifyQuery, member, title);
+            console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle);
+            const result = await updateMemberTitles(shopifyQuery, member, title);
             awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
           }
           await setSeasonArchiveStatus(shopifyQuery, archive.id, "closed");
@@ -235,7 +238,8 @@ async function handleSeasonAdmin(req, res, url, deps) {
         let deletedRecords = 0;
         try {
           for (const row of ranking) {
-            console.log("[Avalon admin] etapa=eliminar registro=" + row.id);\n            await deleteCompetitionRecord(shopifyQuery, row.id);
+            console.log("[Avalon admin] etapa=eliminar registro=" + row.id);
+            await deleteCompetitionRecord(shopifyQuery, row.id);
             deletedRecords++;
           }
         } catch (deleteError) {
