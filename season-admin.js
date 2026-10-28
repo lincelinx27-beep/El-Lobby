@@ -78,7 +78,7 @@ async function ensureMemberTitlesDefinition(shopifyQuery) {
     'query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }'
   );
   const defs = result?.metaobjectDefinitions?.nodes || [];
-  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
   let def = defs.find(item => norm(item.type) === norm("perfil_de_miembros"));
   if (!def) def = defs.find(item => norm(item.name).includes("perfil") && norm(item.name).includes("miembro"));
   if (!def?.id) throw new Error("No se encontró la definición Perfil de Miembro. No se modificaron perfiles ni registros.");
@@ -105,7 +105,7 @@ async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
     if (!conn.pageInfo?.hasNextPage || !conn.pageInfo.endCursor) break;
     after = conn.pageInfo.endCursor;
   }
-  const norm = value => String(value || "").trim().toLocaleLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const norm = value => String(value || "").trim().toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
   const matches = all.filter(node => {
     const name = (node.fields || []).find(field =>
       ["nombre", "nombre_de_titulo", "nombre_del_titulo", "titulo", "titulo_del_catalogo", "name", "title"].includes(norm(field.key))
@@ -122,7 +122,7 @@ async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
 async function createEarnedTitleRecord(shopifyQuery, member, catalogTitle, row, category, seasonName) {
   const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
   const defs = data?.metaobjectDefinitions?.nodes || [];
-  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
   const def = defs.find(item => norm(item.type) === norm("titulo_obtenido")) || defs.find(item => norm(item.name).includes("titulo") && norm(item.name).includes("obtenido"));
   if (!def?.id) throw new Error("No se encontró la definición Título Obtenido; no se eliminaron registros de competición.");
   const fieldsDef = def.fieldDefinitions || [];
@@ -201,7 +201,7 @@ async function deleteCompetitionRecord(shopifyQuery, id) {
 async function saveSeasonHistory(shopifyQuery, seasonName, category, ranking) {
   const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
   const defs = data?.metaobjectDefinitions?.nodes || [];
-  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
   const def = defs.find(item => norm(item.type) === norm("historial_de_temporadas")) || defs.find(item => norm(item.name).includes("historial") && norm(item.name).includes("temporada"));
   if (!def?.id) throw new Error("No se encontró Historial de Temporadas. No se eliminaron registros de competición.");
   const fieldDefs = def.fieldDefinitions || [];
@@ -241,7 +241,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
   async function memberDefinition(shopifyQuery) {
   const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
   const defs = data?.metaobjectDefinitions?.nodes || [];
-  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
   const def = defs.find(item => norm(item.type) === norm("perfil_de_miembros")) || defs.find(item => norm(item.name).includes("perfil") && norm(item.name).includes("miembro"));
   if (!def) throw new Error("No se encontró la definición Perfil de Miembros.");
   return def;
@@ -280,7 +280,7 @@ async function getNextMemberId(shopifyQuery, members) {
 
     for (const member of members) {
       const id = memberIdentifier(memberFieldMap(member));
-      const match = id.match(/(\\d+)$/);
+      const match = id.match(/(\d+)$/);
       if (match) last = Math.max(last, Number(match[1]));
     }
     if (!Number.isSafeInteger(last) || last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
@@ -318,7 +318,7 @@ async function getNextMemberIdForPreview(shopifyQuery, members) {
   if (!Number.isSafeInteger(last) || last < 0) throw new Error("El valor last_id del contador Avalon no es un entero válido.");
   for (const member of members || []) {
     const id = memberIdentifier(memberFieldMap(member));
-    const match = id.match(/(\\d+)$/);
+    const match = id.match(/(\d+)$/);
     if (match) last = Math.max(last, Number(match[1]));
   }
   if (!Number.isSafeInteger(last) || last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
