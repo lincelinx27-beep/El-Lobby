@@ -73,6 +73,48 @@ function titleForRank(rank, category, customTitle) {
   return distinction + " · " + category;
 }
 
+async function validateSeasonSetup(shopifyQuery, ranking) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const findDef = (type, terms) => defs.find(item => norm(item.type) === norm(type)) || defs.find(item => terms.every(term => norm(item.name).includes(norm(term))));
+  const catalog = findDef("catalogo_de_titulos", ["catalogo", "titulo"]);
+  const earned = findDef("titulo_obtenido", ["titulo", "obtenido"]);
+  const history = findDef("historial_de_temporadas", ["historial", "temporada"]);
+  if (!catalog) throw new Error("Falta la definición catalogo_de_titulos.");
+  if (!earned) throw new Error("Falta la definición titulo_obtenido.");
+  if (!history) throw new Error("Falta la definición historial_de_temporadas.");
+  const catalogEntries = await resolveCatalogTitlesForValidation(shopifyQuery);
+  const titles = [...new Set((ranking || []).map(row => titleForRank(row.rank, row.category || "", "")))];
+  // Validate the catalog labels used by the current category before writing history or profiles.
+  const category = (ranking || [])[0]?.category || "";
+  const requiredTitles = (ranking || []).map(row => titleForRank(row.rank, category, ""));
+  const missing = requiredTitles.filter(title => !catalogEntries.some(entry => norm(entry.name) === norm(title)));
+  if (missing.length) throw new Error("Faltan títulos en catalogo_de_titulos para esta categoría: " + [...new Set(missing)].join(", ") + ". No se modificó ningún perfil ni registro de competición.");
+  return { catalog, earned, history };
+}
+
+async function resolveCatalogTitlesForValidation(shopifyQuery) {
+  const items = [];
+  let after = null;
+  while (items.length < 250) {
+    const data = await shopifyQuery(
+      'query($after: String) { metaobjects(type: "catalogo_de_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
+      { after }
+    );
+    const connection = data?.metaobjects;
+    if (!connection) throw new Error("Shopify no devolvió el catálogo de títulos.");
+    items.push(...(connection.nodes || []));
+    if (!connection.pageInfo?.hasNextPage || !connection.pageInfo?.endCursor) break;
+    after = connection.pageInfo.endCursor;
+  }
+  const norm = value => String(value || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  return items.map(node => {
+    const field = (node.fields || []).find(item => ["nombre", "nombre_de_titulo", "nombre_del_titulo", "titulo", "titulo_del_catalogo", "name", "title"].includes(norm(item.key)));
+    return { id: node.id, name: field?.value || "" };
+  });
+}
+
 async function ensureMemberTitlesDefinition(shopifyQuery) {
   const result = await shopifyQuery(
     'query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }'
@@ -455,6 +497,8 @@ async function buildPreview(category) {
         if (preview.titleAssignmentPreview.duplicateMemberIds.length) {
           return safeSend(409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
         }
+        // Validate catalog and required metaobject definitions before making any changes.
+        await validateSeasonSetup(shopifyQuery, ranking);
         // Existing IDs must map to profiles; new profiles are only for rows without an ID.
         const rowIds = ranking.map(row => memberIdentifier(row.fields || "")).filter(Boolean).map(id => id.toLocaleLowerCase());
         if (new Set(rowIds).size !== rowIds.length) {
