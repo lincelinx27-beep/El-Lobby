@@ -90,9 +90,18 @@ function normalizeCategory(value){
   if(["7gc","grandcross","grandcrossjefes","jefesgrandcross"].includes(compact))return "7gc";
   return compact;
 }
+function hasRecordedTime(record){
+  return Number.isFinite(record.minutes)&&record.minutes>=0&&Number.isFinite(record.seconds)&&record.seconds>=0&&record.seconds<60&&Number.isFinite(record.milliseconds)&&record.milliseconds>=0&&record.milliseconds<1000&&(record.minutes>0||record.seconds>0||record.milliseconds>0);
+}
+function compareLeaderboardRecords(a,b){
+  const aHasTime=hasRecordedTime(a),bHasTime=hasRecordedTime(b);
+  if(aHasTime&&bHasTime&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;
+  if(aHasTime!==bHasTime)return aHasTime?-1:1;
+  return (b.score||0)-(a.score||0);
+}
 function filterLeaderboard(records,params){
   const game=normalizeGame(params.get("game")),category=normalizeCategory(params.get("category")),season=clean(params.get("season")).toLowerCase(),challenge=clean(params.get("challenge")).toLowerCase(),verifiedOnly=params.get("verified")==="true";
-  return records.filter(r=>!category||normalizeCategory(r.category)===category).filter(r=>category||!game||normalizeGame(r.game)===game).filter(r=>!season||r.season.toLowerCase()===season).filter(r=>!challenge||r.challenge.toLowerCase()===challenge).filter(r=>!verifiedOnly||r.verified).sort((a,b)=>{if(a.timeMs>0&&b.timeMs>0&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;if(a.timeMs>0&&b.timeMs<=0)return -1;if(a.timeMs<=0&&b.timeMs>0)return 1;return b.score-a.score;}).map((r,index)=>({rank:index+1,...r,formattedTime:r.timeMs>0?`${r.minutes}:${String(r.seconds).padStart(2,"0")}.${String(r.milliseconds).padStart(3,"0")}`:null}));
+  return records.filter(r=>!category||normalizeCategory(r.category)===category).filter(r=>category||!game||normalizeGame(r.game)===game).filter(r=>!season||r.season.toLowerCase()===season).filter(r=>!challenge||r.challenge.toLowerCase()===challenge).filter(r=>!verifiedOnly||r.verified).sort(compareLeaderboardRecords).map((r,index)=>({...r,rank:index+1,formattedTime:hasRecordedTime(r)?`${r.minutes}:${String(r.seconds).padStart(2,"0")}.${String(r.milliseconds).padStart(3,"0")}`:null}));
 }
 const server=http.createServer(async(req,res)=>{
   const adminHandled = await handleSeasonAdmin(req,res,new URL(req.url,APP_URL||"http://localhost"),{send,clean,shopifyQuery,fetchMetaobjects,normalizeRecord,filterLeaderboard});
