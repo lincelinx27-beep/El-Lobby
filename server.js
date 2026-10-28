@@ -77,13 +77,13 @@ async function fetchMetaobjects(type,limit=250){
   return all.slice(0,limit);
 }
 function normalizeGame(value){
-  const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]/g,"");
+  const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"");
   if(["origin","7dso","7dsorigin","thesevendeadlysinsorigin","7origing"].includes(normalized))return "origin";
   if(["grandcross","7dsgc","7dsgrandcross","7gc"].includes(normalized))return "grandcross";
   return normalized;
 }
 function normalizeCategory(value){
-  const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[·•—–]/g," ").replace(/\\s+/g," ").trim();
+  const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[·•—–]/g," ").replace(/\s+/g," ").trim();
   const compact=normalized.replace(/[^a-z0-9]/g,"");
   if(["7origin","origin","jefes","originjefes","7dsorigin","7dso"].includes(compact))return "7origin";
   if(["7origing","gremios","origingremios","gremiosorigin"].includes(compact))return "7origing";
