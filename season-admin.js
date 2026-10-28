@@ -73,93 +73,77 @@ function titleForRank(rank, category, customTitle) {
 }
 
 async function ensureMemberTitlesDefinition(shopifyQuery) {
-  // Shopify may return null for metaobjectDefinitionByType when a definition
-  // is owned by another app. Discover definitions through the connection first.
-  const definitionsResult = await shopifyQuery(
+  const result = await shopifyQuery(
     'query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }'
   );
-  const definitions = definitionsResult?.metaobjectDefinitions?.nodes || [];
-  const normalize = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const targetType = normalize("perfil_de_miembro");
-  let definition = definitions.find(item => normalize(item.type) === targetType);
-  if (!definition) {
-    definition = definitions.find(item => normalize(item.name).includes("perfil") && normalize(item.name).includes("miembro"));
-  }
-  if (!definition?.id) {
-    const observed = definitions.map(item => item.type + " (" + item.name + ")").join(", ");
-    throw new Error("TÍTULOS / no se localizó la definición de Perfil de Miembro en metaobjectDefinitions. Tipos visibles para esta app: " + (observed || "ninguno") + ". Verifica que el token de Shopify tenga acceso a definiciones/metaobjetos y que la definición esté visible para esta app. No se modificó ningún perfil.");
-  }
+  const defs = result?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  let def = defs.find(item => norm(item.type) === norm("perfil_de_miembro"));
+  if (!def) def = defs.find(item => norm(item.name).includes("perfil") && norm(item.name).includes("miembro"));
+  if (!def?.id) throw new Error("No se encontró la definición Perfil de Miembro. No se modificaron perfiles ni registros.");
 
-  const possibleKeys = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_"];
-  let fieldDefinition = (definition.fieldDefinitions || []).find(field => possibleKeys.includes(field.key));
-  if (fieldDefinition) return fieldDefinition;
-
-  const update = await shopifyQuery(
-    'mutation($id: ID!, $fields: [MetaobjectFieldDefinitionInput!]!) { metaobjectDefinitionUpdate(id: $id, definition: { fieldDefinitions: $fields }) { metaobjectDefinition { id type fieldDefinitions { key name type { name } } } userErrors { field message } } }',
-    { id: definition.id, fields: [{ key: "titulos_obtenidos", name: "Títulos Obtenidos", type: "list.single_line_text_field" }] }
-  );
-  const errors = update?.metaobjectDefinitionUpdate?.userErrors || [];
-  if (errors.length) {
-    throw new Error("TÍTULOS / no se pudo añadir el campo Títulos Obtenidos a Perfil de Miembro: " + errors.map(error => error.message).join("; ") + ". No se modificó ningún perfil ni se eliminaron registros.");
+  const field = (def.fieldDefinitions || []).find(item => ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_"].includes(item.key));
+  if (!field) throw new Error("Falta el campo Títulos Obtenidos en Perfil de Miembro. Créalo como lista de referencias a metaobjetos (list.metaobject_reference). No se borraron registros.");
+  const type = String(field.type?.name || "").toLowerCase();
+  if (type !== "list.metaobject_reference") {
+    throw new Error("El campo " + field.key + " tiene tipo " + (type || "desconocido") + "; se requiere list.metaobject_reference. No se modificaron perfiles ni registros.");
   }
-  fieldDefinition = (update?.metaobjectDefinitionUpdate?.metaobjectDefinition?.fieldDefinitions || []).find(field => field.key === "titulos_obtenidos");
-  if (!fieldDefinition) {
-    throw new Error("TÍTULOS / Shopify no confirmó la creación del campo titulos_obtenidos. No se modificó ningún perfil ni se eliminaron registros.");
-  }
-  return fieldDefinition;
+  return field;
 }
 
-async function updateMemberTitles(shopifyQuery, member, awardTitle) {
-  const fields = memberFieldMap(member);
-  const fieldDefinition = await ensureMemberTitlesDefinition(shopifyQuery);
-  const fieldKey = fieldDefinition.key;
-  const fieldType = String(fieldDefinition?.type?.name || "").toLowerCase();
-  if (!fieldType) {
-    throw new Error("TÍTULOS / perfil_de_miembro/" + member.handle + ": Shopify no devolvió el tipo del campo " + fieldKey + ". No se modificó el perfil ni se eliminaron registros.");
-  }
-
-  const isList = fieldType.startsWith("list.");
-  const isJson = fieldType === "json";
-  const needsJsonEncoding = isList || isJson;
-  const raw = String(fields[fieldKey] || "");
-  let titles = [];
-
-  if (needsJsonEncoding) {
-    try {
-      const parsed = JSON.parse(raw || "[]");
-      if (Array.isArray(parsed)) titles = parsed.map(value => String(value).trim()).filter(Boolean);
-      else if (typeof parsed === "string" && parsed.trim()) titles = [parsed.trim()];
-      else titles = existingTitles(raw);
-    } catch {
-      titles = existingTitles(raw);
+async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
+  const wanted = String(requestedTitle || "").trim();
+  if (!wanted) throw new Error("No se especificó el título a otorgar.");
+  const nodes = await (async () => {
+    const all = []; let after = null;
+    while (all.length < 250) {
+      const data = await shopifyQuery(
+        'query($after: String) { metaobjects(type: "catalogo_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
+        { after }
+      );
+      const conn = data.metaobjects; all.push(...conn.nodes || []);
+      if (!conn.pageInfo?.hasNextPage || !conn.pageInfo.endCursor) break;
+      after = conn.pageInfo.endCursor;
     }
-  } else {
-    titles = existingTitles(raw);
+    return all;
+  })();
+  const norm = value => String(value || "").trim().toLocaleLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "");
+  const matches = nodes.filter(node => {
+    const name = (node.fields || []).find(field => norm(field.key) === norm("Nombre de Título") || norm(field.key) === norm("nombre_de_titulo") || norm(field.key) === "name");
+    return name && norm(name.value) === norm(wanted);
+  });
+  if (matches.length !== 1) {
+    throw new Error(matches.length ? "El catálogo contiene más de una entrada para el título '" + wanted + "'. Corrige los duplicados antes de cerrar." : "No se encontró '" + wanted + "' en Catálogo de Títulos (catalogo_titulos). Añade la entrada y vuelve a intentarlo. No se eliminaron registros.");
   }
+  return matches[0];
+}
 
-  if (titles.some(title => title.toLocaleLowerCase() === awardTitle.toLocaleLowerCase())) {
-    return { updated: false, reason: "already-awarded" };
+async function updateMemberTitles(shopifyQuery, member, awardTitleMetaobject) {
+  const fieldDefinition = await ensureMemberTitlesDefinition(shopifyQuery);
+  const key = fieldDefinition.key;
+  const raw = String(memberFieldMap(member)[key] || "");
+  let refs = [];
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    refs = Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    throw new Error("El perfil " + member.handle + " contiene referencias de títulos con formato inválido. No se borraron registros.");
   }
-
-  const updatedTitles = [...titles, awardTitle];
-  const nextValue = needsJsonEncoding ? JSON.stringify(updatedTitles) : updatedTitles.join(" | ");
-  if (needsJsonEncoding) JSON.parse(nextValue);
-
+  const titleId = awardTitleMetaobject.id;
+  if (refs.includes(titleId)) return { updated: false, reason: "already-awarded" };
+  const nextValue = JSON.stringify([...refs, titleId]);
   const result = await shopifyQuery(
     'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
-    { id: member.id, fields: [{ key: fieldKey, value: nextValue }] }
+    { id: member.id, fields: [{ key, value: nextValue }] }
   );
   const errors = result?.metaobjectUpdate?.userErrors || [];
-  if (errors.length) {
-    throw new Error("TÍTULOS / " + fieldKey + " (" + fieldType + "): " + errors.map(error => error.message).join("; ") + ". No se eliminaron registros de competición.");
-  }
+  if (errors.length) throw new Error("TÍTULOS / " + key + " (list.metaobject_reference): " + errors.map(e => e.message).join("; ") + ". No se eliminaron registros de competición.");
   const saved = result?.metaobjectUpdate?.metaobject;
-  if (!saved) {
-    throw new Error("TÍTULOS / metaobjectUpdate perfil_de_miembro/" + member.handle + ": Shopify no confirmó la actualización. No se eliminaron registros de competición.");
-  }
-  const savedField = (saved.fields || []).find(field => field.key === fieldKey);
-  if (!savedField || savedField.value !== nextValue) {
-    throw new Error("TÍTULOS / perfil_de_miembro/" + member.handle + ": Shopify no devolvió el valor guardado esperado. No se eliminaron registros de competición.");
+  const savedField = saved?.fields?.find(field => field.key === key);
+  let verified = [];
+  try { verified = JSON.parse(savedField?.value || "[]"); } catch {}
+  if (!saved || !Array.isArray(verified) || !verified.includes(titleId)) {
+    throw new Error("Shopify no confirmó la referencia del título para " + member.handle + ". No se eliminaron registros de competición.");
   }
   return { updated: true };
 }
@@ -273,10 +257,11 @@ async function handleSeasonAdmin(req, res, url, deps) {
         for (const row of ranking) {
           const memberId = memberIdentifier(row.fields || {});
           const member = byId.get(memberId.toLocaleLowerCase());
-          const title = titleForRank(row.rank, category, clean(data.title));
-          console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle);
-          const result = await updateMemberTitles(shopifyQuery, member, title);
-          awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
+          const title = clean(data.title) || titleForRank(row.rank, category, "");
+          const titleMetaobject = await resolveCatalogTitle(shopifyQuery, title);
+          console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle + " title=" + titleMetaobject.handle);
+          const result = await updateMemberTitles(shopifyQuery, member, titleMetaobject);
+          awards.push({ rank: row.rank, player: row.player, memberId, title, titleId: titleMetaobject.id, updated: result.updated, reason: result.reason || null });
         }
 
         // Delete only the competition records selected for this category, after all titles were saved.
