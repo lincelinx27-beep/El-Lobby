@@ -226,7 +226,22 @@ async function saveSeasonHistory(shopifyQuery, seasonName, category, ranking) {
   if (rankingKey) fields.push({ key: rankingKey, value: JSON.stringify(ranking) });
   if (statusKey) fields.push({ key: statusKey, value: "cerrada" });
   if (!nameKey || !rankingKey) throw new Error("Historial de Temporadas debe tener campos de temporada y ranking/resultados para archivar de forma segura.");
-  const handle = "temporada-" + String(seasonName).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now();
+  const seasonSlug = String(seasonName).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 180);
+  const categorySlug = String(category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
+  const handle = ("temporada-" + seasonSlug + "-" + categorySlug).slice(0, 250).replace(/-+$/g, "");
+  const existing = await shopifyQuery(
+    'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle fields { key value } } }',
+    { type: def.type, handle }
+  );
+  if (existing?.metaobjectByHandle) {
+    const update = await shopifyQuery(
+      'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle } userErrors { field message } } }',
+      { id: existing.metaobjectByHandle.id, fields }
+    );
+    const updateErrors = update?.metaobjectUpdate?.userErrors || [];
+    if (updateErrors.length || !update?.metaobjectUpdate?.metaobject) throw new Error("No se pudo actualizar el histórico de la temporada existente: " + updateErrors.map(e => e.message).join("; "));
+    return update.metaobjectUpdate.metaobject;
+  }
   const created = await shopifyQuery('mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: $type, handle: $handle, fields: $fields }) { metaobject { id handle } userErrors { field message } } }', { type: def.type, handle, fields });
   const errors = created?.metaobjectCreate?.userErrors || [];
   if (errors.length || !created?.metaobjectCreate?.metaobject) throw new Error("No se pudo guardar Historial de Temporadas: " + errors.map(e => e.message).join("; "));
