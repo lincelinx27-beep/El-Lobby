@@ -141,6 +141,22 @@ const server=http.createServer(async(req,res)=>{
     try{const nodes=await fetchMetaobjects("catalogo_de_titulos");return send(res,200,{ok:true,count:nodes.length,titles:nodes.map(node=>({id:node.id,handle:node.handle,fields:fieldMap(node.fields)}))});}
     catch(error){return send(res,502,{ok:false,error:error.message});}
   }
+  if(req.method==="GET"&&url.pathname==="/api/members/next-id"){
+    try{
+      const nodes=await fetchMetaobjects("perfil_de_miembros");
+      const idKeys=["identificador_de_miembro","identificador_del_miembro","identificador_miembro"];
+      let maxId=0;
+      for(const node of nodes){
+        const fields=fieldMap(node.fields);
+        const raw=idKeys.map(key=>clean(fields[key])).find(Boolean)||"";
+        const match=raw.match(/(\\d+)$/);
+        if(match)maxId=Math.max(maxId,Number(match[1]));
+      }
+      if(maxId>=999999)return send(res,409,{ok:false,error:"Se alcanzó el límite de identificadores numéricos disponibles."});
+      const nextId=String(maxId+1).padStart(3,"0");
+      return send(res,200,{ok:true,nextId,existingMembers:nodes.length,policy:"sequential-never-reuse"});
+    }catch(error){return send(res,502,{ok:false,error:error.message||"No se pudo generar el identificador."});}
+  }
   if(req.method==="GET"&&url.pathname==="/api/members"){
     try{const nodes=await fetchMetaobjects("perfil_de_miembros");return send(res,200,{ok:true,count:nodes.length,members:nodes.map(node=>({id:node.id,handle:node.handle,fields:fieldMap(node.fields)}))});}
     catch(error){return send(res,502,{ok:false,error:error.message});}
