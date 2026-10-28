@@ -173,7 +173,60 @@ async function handleSeasonAdmin(req, res, url, deps) {
     return true;
   }
 
-  async function buildPreview(category) {
+  async function memberDefinition(shopifyQuery) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const def = defs.find(item => norm(item.type) === norm("perfil_de_miembros")) || defs.find(item => norm(item.name).includes("perfil") && norm(item.name).includes("miembro"));
+  if (!def) throw new Error("No se encontró la definición Perfil de Miembros.");
+  return def;
+}
+function nextMemberId(members) {
+  let max = 0;
+  for (const member of members) {
+    const id = memberIdentifier(memberFieldMap(member));
+    const match = id.match(/(\\d+)$/);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  if (max >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
+  return String(max + 1).padStart(3, "0");
+}
+async function createMemberProfile(shopifyQuery, members, row, category) {
+  const def = await memberDefinition(shopifyQuery);
+  const fieldsDef = def.fieldDefinitions || [];
+  const findKey = (...aliases) => {
+    const wanted = new Set(aliases.map(alias => String(alias).toLowerCase().replace(/[^a-z0-9]/g, "")));
+    const item = fieldsDef.find(field => wanted.has(String(field.key || "").toLowerCase().replace(/[^a-z0-9]/g, "")) || wanted.has(String(field.name || "").toLowerCase().replace(/[^a-z0-9]/g, "")));
+    return item?.key || null;
+  };
+  const idKey = findKey("identificador_de_miembro", "identificador_del_miembro", "identificador_miembro");
+  const nameKey = findKey("nombre_del_miembro", "nombre_de_miembro", "nombre", "miembro");
+  const guildKey = findKey("gremio", "nombre_del_gremio", "nombre_de_gremio");
+  const gameKey = findKey("juego", "juego_principal");
+  const titlesKey = findKey("titulos_obtenidos", "titulos_obtenidos_");
+  if (!idKey || !nameKey) throw new Error("Perfil de Miembros necesita campos Nombre del Miembro e Identificador de Miembro para crear perfiles automáticamente.");
+  const id = nextMemberId(members);
+  const values = [
+    { key: idKey, value: id },
+    { key: nameKey, value: clean(row.player) || "Miembro Avalon" }
+  ];
+  if (guildKey) values.push({ key: guildKey, value: clean(row.guild) });
+  if (gameKey) values.push({ key: gameKey, value: category.toLowerCase().includes("grand cross") ? "Grand Cross" : "Origin" });
+  if (titlesKey) values.push({ key: titlesKey, value: "[]" });
+  const handle = "miembro-" + id;
+  const result = await shopifyQuery(
+    'mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: {type: $type, handle: $handle, fields: $fields}) { metaobject { id handle fields { key value } } userErrors { field message } } }',
+    { type: def.type, handle, fields: values }
+  );
+  const errors = result?.metaobjectCreate?.userErrors || [];
+  if (errors.length) throw new Error("No se pudo crear el perfil " + id + ": " + errors.map(e => e.message).join("; "));
+  const created = result?.metaobjectCreate?.metaobject;
+  if (!created) throw new Error("Shopify no confirmó la creación del perfil " + id + ".");
+  members.push(created);
+  return created;
+}
+
+async function buildPreview(category) {
     const categoryText = category.toLocaleLowerCase();
     const categoryCode = categoryText.includes("grand cross") || categoryText.includes("grandcross") ? "7GC" : categoryText.includes("gremios") ? "7OriginG" : "7Origin";
     const nodes = await fetchMetaobjects("registro_de_competicion");
@@ -192,16 +245,17 @@ async function handleSeasonAdmin(req, res, url, deps) {
     const assignments = ranking.map(row => {
       const memberId = memberIdentifier(row.fields || {});
       const member = memberId ? membersById.get(memberId.toLocaleLowerCase()) : null;
-      return { rank: row.rank, player: row.player, memberId: memberId || null, matchedMember: Boolean(member), memberHandle: member?.handle || null };
+      return { rank: row.rank, player: row.player, guild: row.guild || "", memberId: memberId || null, matchedMember: Boolean(member), memberHandle: member?.handle || null, willCreateProfile: !member };
     });
     return {
       ranking,
       titleAssignmentPreview: {
         membersWithId: membersById.size,
         matched: assignments.filter(item => item.matchedMember).length,
-        unmatched: assignments.filter(item => !item.matchedMember).map(({ rank, player, memberId }) => ({ rank, player, memberId })),
+        unmatched: assignments.filter(item => !item.matchedMember).map(({ rank, player, guild, memberId }) => ({ rank, player, guild, memberId })),
+        profilesToCreate: assignments.filter(item => !item.matchedMember).length,
         duplicateMemberIds: [...new Set(duplicateIds)],
-        note: "Cada registro de competición debe incluir identificador_de_miembro (ej. avalon001). No se asocian perfiles por nombre."
+        note: "Los registros con identificador existente se enlazan por ID; cuando el ID no existe se creará un perfil con el siguiente identificador libre. Nunca se empareja por nombre."
       }
     };
   }
@@ -240,9 +294,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
         if (preview.titleAssignmentPreview.duplicateMemberIds.length) {
           return safeSend(409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
         }
-        if (preview.titleAssignmentPreview.unmatched.length) {
-          return safeSend(409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_de_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
-        }
+        // Unmatched participants will receive a new profile and sequential permanent ID below.
 
         // This flow uses only the merchant-created member and competition metaobjects.
         // Do not create/update the app-reserved archive definition: Shopify rejects that type.
@@ -250,13 +302,22 @@ async function handleSeasonAdmin(req, res, url, deps) {
         const byId = new Map();
         for (const member of members) {
           const id = memberIdentifier(memberFieldMap(member));
-          if (id) byId.set(id.toLocaleLowerCase(), member);
+          if (id) {
+            const key = id.toLocaleLowerCase();
+            if (byId.has(key)) return safeSend(409, { ok: false, error: "Se detectó un identificador duplicado en perfiles. Corrige el duplicado antes de cerrar.", duplicateId: id });
+            byId.set(key, member);
+          }
         }
 
         const awards = [];
         for (const row of ranking) {
-          const memberId = memberIdentifier(row.fields || {});
-          const member = byId.get(memberId.toLocaleLowerCase());
+          let memberId = memberIdentifier(row.fields || {});
+          let member = memberId ? byId.get(memberId.toLocaleLowerCase()) : null;
+          if (!member) {
+            member = await createMemberProfile(shopifyQuery, members, row, category);
+            memberId = memberIdentifier(memberFieldMap(member));
+            byId.set(memberId.toLocaleLowerCase(), member);
+          }
           const title = clean(data.title) || titleForRank(row.rank, category, "");
           const titleMetaobject = await resolveCatalogTitle(shopifyQuery, title);
           console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle + " title=" + titleMetaobject.handle);
