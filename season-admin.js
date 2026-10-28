@@ -1,5 +1,6 @@
 // Avalon Season Admin — protected archive routes
 const ADMIN_TOKEN = process.env.AVALON_ADMIN_TOKEN || "";
+let memberIdAllocationLock = Promise.resolve();
 
 function authorized(req) {
   const header = req.headers.authorization || "";
@@ -66,10 +67,195 @@ async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
   if (!result?.metaobjectUpdate?.metaobject) throw new Error("ARCHIVO / metaobjectUpdate avalon_season_archive: Shopify no confirmó el cambio de estado.");
 }
 
+async function getNextMemberId(shopifyQuery, members) {
+  // Process-local queue reduces collisions inside one node process. The reservation metaobject
+  // handle is the cross-instance uniqueness guard: Shopify accepts only one reservation per ID.
+  const previous = memberIdAllocationLock;
+  let release;
+  memberIdAllocationLock = new Promise(resolve => { release = resolve; });
+  await previous;
+  try {
+    const counterDefinition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type fieldDefinitions { key type { name } } } }');
+    if (!counterDefinition?.metaobjectDefinitionByType) {
+      const created = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_counter", name: "Avalon Member ID Counter", fieldDefinitions: [{ key: "last_id", name: "Last assigned ID", type: "number_integer" }] }) { metaobjectDefinition { id type } userErrors { field message } } }');
+      const errors = created?.metaobjectDefinitionCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectDefinitionCreate?.metaobjectDefinition) {
+        throw new Error("No se pudo crear la definición permanente avalon_member_id_counter: " + errors.map(e => e.message).join("; "));
+      }
+    } else {
+      const field = (counterDefinition.metaobjectDefinitionByType.fieldDefinitions || []).find(item => item.key === "last_id");
+      if (field && String(field.type?.name || "").toLowerCase() !== "number_integer") {
+        throw new Error("El campo last_id de avalon_member_id_counter debe ser Número entero (number_integer).");
+      }
+    }
+
+    const reservationDefinition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_reservation") { id type fieldDefinitions { key type { name } } } }');
+    if (!reservationDefinition?.metaobjectDefinitionByType) {
+      const created = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_reservation", name: "Avalon Member ID Reservation", fieldDefinitions: [{ key: "member_id", name: "Member ID", type: "single_line_text_field" }] }) { metaobjectDefinition { id type } userErrors { field message } } }');
+      const errors = created?.metaobjectDefinitionCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectDefinitionCreate?.metaobjectDefinition) {
+        throw new Error("No se pudo crear la definición de reservas permanentes avalon_member_id_reservation: " + errors.map(e => e.message).join("; "));
+      }
+    }
+
+    const records = await shopifyQuery('query { metaobjects(type: "avalon_member_id_counter", first: 50) { nodes { id handle fields { key value } } } }');
+    const counters = records?.metaobjects?.nodes || [];
+    const counterMatches = counters.filter(item => item.handle === "avalon-member-id-counter");
+    if (counterMatches.length > 1) throw new Error("Hay más de un registro contador Avalon con el handle avalon-member-id-counter.");
+    // Never adopt an arbitrary counter record: only the canonical handle owns this sequence.
+    let counter = counterMatches[0] || null;
+    let last = Number(counter?.fields?.find(field => field.key === "last_id")?.value || 0);
+    if (!Number.isSafeInteger(last) || last < 0) throw new Error("El valor last_id del contador Avalon no es un entero válido.");
+
+    for (const member of members || []) {
+      const id = memberIdentifier(memberFieldMap(member));
+      const match = id.match(/(\d+)$/);
+      if (match) last = Math.max(last, Number(match[1]));
+    }
+    if (!Number.isSafeInteger(last) || last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
+
+    // Reserve each candidate using a unique handle before advancing the watermark. If two
+    // server instances race for the same ID, only one reservation can succeed.
+    let next = last + 1;
+    let reservation = null;
+    while (next <= 999999) {
+      const memberId = String(next).padStart(3, "0");
+      const handle = "member-" + memberId;
+      const existing = await shopifyQuery(
+        'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle } }',
+        { type: "avalon_member_id_reservation", handle }
+      );
+      if (existing?.metaobjectByHandle) {
+        next++;
+        continue;
+      }
+      const created = await shopifyQuery(
+        'mutation($handle: String!, $memberId: String!) { metaobjectCreate(metaobject: { type: "avalon_member_id_reservation", handle: $handle, fields: [{ key: "member_id", value: $memberId }] }) { metaobject { id handle } userErrors { field message } } }',
+        { handle, memberId }
+      );
+      const errors = created?.metaobjectCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectCreate?.metaobject) {
+        const message = errors.map(error => error.message).join("; ");
+        if (/handle.*(taken|exist|already)|already.*handle|unique/i.test(message)) {
+          next++;
+          continue;
+        }
+        throw new Error("No se pudo reservar el identificador " + memberId + ": " + (message || "Shopify no confirmó la reserva."));
+      }
+      reservation = created.metaobjectCreate.metaobject;
+      break;
+    }
+    if (!reservation) throw new Error("Se agotaron los identificadores disponibles.");
+    const memberId = String(next).padStart(3, "0");
+
+    if (counter) {
+      const update = await shopifyQuery(
+        'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id fields { key value } } userErrors { field message } } }',
+        { id: counter.id, fields: [{ key: "last_id", value: String(next) }] }
+      );
+      const errors = update?.metaobjectUpdate?.userErrors || [];
+      if (errors.length || !update?.metaobjectUpdate?.metaobject) {
+        // Reservation remains durable; the next allocation will skip it even if watermark update failed.
+        throw new Error("El ID " + memberId + " quedó reservado, pero no se pudo actualizar last_id. No se reutilizará; revisa el contador y vuelve a intentar.");
+      }
+    } else {
+      const created = await shopifyQuery(
+        'mutation($handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: "avalon_member_id_counter", handle: $handle, fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
+        { handle: "avalon-member-id-counter", fields: [{ key: "last_id", value: String(next) }] }
+      );
+      const errors = created?.metaobjectCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectCreate?.metaobject) {
+        throw new Error("El ID " + memberId + " quedó reservado, pero no se pudo crear el registro contador. No se reutilizará; revisa Shopify y vuelve a intentar.");
+      }
+    }
+    return memberId;
+  } finally {
+    release();
+  }
+}
+
+async function getNextMemberIdForPreview(shopifyQuery, members) {
+  const definition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type fieldDefinitions { key type { name } } } }');
+  let last = 0;
+  if (definition?.metaobjectDefinitionByType) {
+    const counterField = (definition.metaobjectDefinitionByType.fieldDefinitions || []).find(field => field.key === "last_id");
+    if (counterField && String(counterField.type?.name || "").toLowerCase() !== "number_integer") {
+      throw new Error("El campo last_id de avalon_member_id_counter debe ser Número entero (number_integer).");
+    }
+  }
+  const records = await shopifyQuery('query { metaobjects(type: "avalon_member_id_counter", first: 50) { nodes { id handle fields { key value } } } }');
+  const counters = records?.metaobjects?.nodes || [];
+  if (counters.filter(item => item.handle === "avalon-member-id-counter").length > 1) {
+    throw new Error("Hay más de un registro contador Avalon con el handle avalon-member-id-counter. Deja uno solo antes de continuar.");
+  }
+  const counter = counters.find(item => item.handle === "avalon-member-id-counter") || counters[0] || null;
+  last = Number(counter?.fields?.find(field => field.key === "last_id")?.value || 0);
+  if (!Number.isSafeInteger(last) || last < 0) throw new Error("El valor last_id del contador Avalon no es un entero válido.");
+  for (const member of members || []) {
+    const id = memberIdentifier(memberFieldMap(member));
+    const match = id.match(/(\d+)$/);
+    if (match) last = Math.max(last, Number(match[1]));
+  }
+  if (!Number.isSafeInteger(last)) throw new Error("El valor máximo de IDs existentes no es válido.");
+  // Preview remains read-only but skips IDs already reserved even when the watermark is stale.
+  while (last < 999999) {
+    const candidate = String(last + 1).padStart(3, "0");
+    const check = await shopifyQuery(
+      'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle } }',
+      { type: "avalon_member_id_reservation", handle: "member-" + candidate }
+    );
+    if (!check?.metaobjectByHandle) return candidate;
+    last++;
+  }
+  throw new Error("Se agotaron los identificadores disponibles.");
+}
+
 function titleForRank(rank, category, customTitle) {
   if (customTitle) return customTitle;
   const distinction = rank === 1 ? "Campeón" : rank === 2 ? "Subcampeón" : rank === 3 ? "Tercer lugar" : "Puesto " + rank;
   return distinction + " · " + category;
+}
+
+async function validateSeasonSetup(shopifyQuery, ranking, selectedCategory) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const findDef = (type, terms) => defs.find(item => norm(item.type) === norm(type)) || defs.find(item => terms.every(term => norm(item.name).includes(norm(term))));
+  const catalog = findDef("catalogo_de_titulos", ["catalogo", "titulo"]);
+  const earned = findDef("titulo_obtenido", ["titulo", "obtenido"]);
+  const history = findDef("historial_de_temporadas", ["historial", "temporada"]);
+  if (!catalog) throw new Error("Falta la definición catalogo_de_titulos.");
+  if (!earned) throw new Error("Falta la definición titulo_obtenido.");
+  if (!history) throw new Error("Falta la definición historial_de_temporadas.");
+  const catalogEntries = await resolveCatalogTitlesForValidation(shopifyQuery);
+  // Validate the catalog labels used by the selected panel category before writing history or profiles.
+  const category = String(selectedCategory || "").trim();
+  if (!category) throw new Error("Selecciona una categoría para cerrar la temporada.");
+  const requiredTitles = (ranking || []).map(row => titleForRank(row.rank, category, ""));
+  const missing = requiredTitles.filter(title => !catalogEntries.some(entry => norm(entry.name) === norm(title)));
+  if (missing.length) throw new Error("Faltan títulos en catalogo_de_titulos para esta categoría: " + [...new Set(missing)].join(", ") + ". No se modificó ningún perfil ni registro de competición.");
+  return { catalog, earned, history };
+}
+
+async function resolveCatalogTitlesForValidation(shopifyQuery) {
+  const items = [];
+  let after = null;
+  while (items.length < 250) {
+    const data = await shopifyQuery(
+      'query($after: String) { metaobjects(type: "catalogo_de_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
+      { after }
+    );
+    const connection = data?.metaobjects;
+    if (!connection) throw new Error("Shopify no devolvió el catálogo de títulos.");
+    items.push(...(connection.nodes || []));
+    if (!connection.pageInfo?.hasNextPage || !connection.pageInfo?.endCursor) break;
+    after = connection.pageInfo.endCursor;
+  }
+  const norm = value => String(value || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  return items.map(node => {
+    const field = (node.fields || []).find(item => ["nombre", "nombre_de_titulo", "nombre_del_titulo", "titulo", "titulo_del_catalogo", "name", "title"].includes(norm(item.key)));
+    return { id: node.id, name: field?.value || "" };
+  });
 }
 
 async function ensureMemberTitlesDefinition(shopifyQuery) {
@@ -77,8 +263,8 @@ async function ensureMemberTitlesDefinition(shopifyQuery) {
     'query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }'
   );
   const defs = result?.metaobjectDefinitions?.nodes || [];
-  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
-  let def = defs.find(item => norm(item.type) === norm("perfil_de_miembro"));
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  let def = defs.find(item => norm(item.type) === norm("perfil_de_miembros"));
   if (!def) def = defs.find(item => norm(item.name).includes("perfil") && norm(item.name).includes("miembro"));
   if (!def?.id) throw new Error("No se encontró la definición Perfil de Miembro. No se modificaron perfiles ni registros.");
 
@@ -94,28 +280,73 @@ async function ensureMemberTitlesDefinition(shopifyQuery) {
 async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
   const wanted = String(requestedTitle || "").trim();
   if (!wanted) throw new Error("No se especificó el título a otorgar.");
-  const nodes = await (async () => {
-    const all = []; let after = null;
-    while (all.length < 250) {
-      const data = await shopifyQuery(
-        'query($after: String) { metaobjects(type: "catalogo_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
-        { after }
-      );
-      const conn = data.metaobjects; all.push(...conn.nodes || []);
-      if (!conn.pageInfo?.hasNextPage || !conn.pageInfo.endCursor) break;
-      after = conn.pageInfo.endCursor;
-    }
-    return all;
-  })();
-  const norm = value => String(value || "").trim().toLocaleLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "");
-  const matches = nodes.filter(node => {
-    const name = (node.fields || []).find(field => norm(field.key) === norm("Nombre de Título") || norm(field.key) === norm("nombre_de_titulo") || norm(field.key) === "name");
+  const all = []; let after = null;
+  while (all.length < 250) {
+    const data = await shopifyQuery(
+      'query($after: String) { metaobjects(type: "catalogo_de_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
+      { after }
+    );
+    const conn = data.metaobjects; all.push(...conn.nodes || []);
+    if (!conn.pageInfo?.hasNextPage || !conn.pageInfo.endCursor) break;
+    after = conn.pageInfo.endCursor;
+  }
+  const norm = value => String(value || "").trim().toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const matches = all.filter(node => {
+    const name = (node.fields || []).find(field =>
+      ["nombre", "nombre_de_titulo", "nombre_del_titulo", "titulo", "titulo_del_catalogo", "name", "title"].includes(norm(field.key))
+    );
     return name && norm(name.value) === norm(wanted);
   });
   if (matches.length !== 1) {
-    throw new Error(matches.length ? "El catálogo contiene más de una entrada para el título '" + wanted + "'. Corrige los duplicados antes de cerrar." : "No se encontró '" + wanted + "' en Catálogo de Títulos (catalogo_titulos). Añade la entrada y vuelve a intentarlo. No se eliminaron registros.");
+    throw new Error(matches.length
+      ? "El catálogo contiene más de una entrada para el título '" + wanted + "'. Corrige los duplicados antes de cerrar."
+      : "No se encontró '" + wanted + "' en Catálogo de Títulos (catalogo_de_titulos). Revisa el campo Nombre de la definición y la entrada del catálogo. No se eliminaron registros.");
   }
   return matches[0];
+}
+async function createEarnedTitleRecord(shopifyQuery, member, catalogTitle, row, category, seasonName) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const def = defs.find(item => norm(item.type) === norm("titulo_obtenido")) || defs.find(item => norm(item.name).includes("titulo") && norm(item.name).includes("obtenido"));
+  if (!def?.id) throw new Error("No se encontró la definición Título Obtenido; no se eliminaron registros de competición.");
+  const fieldsDef = def.fieldDefinitions || [];
+  const find = aliases => fieldsDef.find(field => aliases.includes(norm(field.key)) || aliases.includes(norm(field.name)));
+  const titleRef = find(["titulo", "titulobase", "titulodecatalogo", "titulodelcatalogo", "referenciaaltitulo"]);
+  const memberRef = find(["miembro", "perfil", "perfilmiembro", "miembroreferido"]);
+  const memberIdField = find(["identificadordemiembro", "identificadormiembro"]);
+  const memberNameField = find(["nombredelmiembro", "nombrede miembro", "miembro"]);
+  const guildField = find(["gremio", "nombredelgremio"]);
+  const gameField = find(["juego", "juegoprincipal"]);
+  const categoryField = find(["categoria"]);
+  const rankField = find(["puesto", "posicion", "ranking", "lugar"]);
+  const seasonField = find(["temporada", "nombredelatemporada"]);
+  const dateField = find(["fecha", "fechadeobtencion", "fechaobtencion"]);
+  const fields = [];
+  if (titleRef) fields.push({ key: titleRef.key, value: catalogTitle.id });
+  if (memberRef) fields.push({ key: memberRef.key, value: member.id });
+  if (memberIdField) fields.push({ key: memberIdField.key, value: memberIdentifier(memberFieldMap(member)) });
+  if (memberNameField) fields.push({ key: memberNameField.key, value: clean(row.player) });
+  if (guildField) fields.push({ key: guildField.key, value: clean(row.guild) });
+  if (gameField) fields.push({ key: gameField.key, value: category.toLowerCase().includes("grand cross") ? "Grand Cross" : "Origin" });
+  if (categoryField) fields.push({ key: categoryField.key, value: category });
+  if (rankField) fields.push({ key: rankField.key, value: String(row.rank) });
+  if (seasonField) fields.push({ key: seasonField.key, value: seasonName });
+  if (dateField) fields.push({ key: dateField.key, value: new Date().toISOString() });
+  if (!titleRef && !memberIdField && !memberRef) throw new Error("Título Obtenido no tiene campos compatibles para guardar título y miembro.");
+  const seasonSlug = String(seasonName || category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70);
+  const categorySlug = String(category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  const memberSlug = memberIdentifier(memberFieldMap(member)).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const handle = ("titulo-" + memberSlug + "-" + categorySlug + "-" + seasonSlug + "-r" + row.rank).slice(0, 250).replace(/-+$/g, "");
+  const existing = await shopifyQuery(
+    'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle fields { key value } } }',
+    { type: def.type, handle }
+  );
+  if (existing?.metaobjectByHandle) return existing.metaobjectByHandle;
+  const created = await shopifyQuery('mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: $type, handle: $handle, fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }', { type: def.type, handle, fields });
+  const errors = created?.metaobjectCreate?.userErrors || [];
+  if (errors.length || !created?.metaobjectCreate?.metaobject) throw new Error("No se pudo guardar el título obtenido para " + member.handle + ": " + errors.map(e => e.message).join("; "));
+  return created.metaobjectCreate.metaobject;
 }
 
 async function updateMemberTitles(shopifyQuery, member, awardTitleMetaobject) {
@@ -160,6 +391,48 @@ async function deleteCompetitionRecord(shopifyQuery, id) {
   }
 }
 
+async function saveSeasonHistory(shopifyQuery, seasonName, category, ranking) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const def = defs.find(item => norm(item.type) === norm("historial_de_temporadas")) || defs.find(item => norm(item.name).includes("historial") && norm(item.name).includes("temporada"));
+  if (!def?.id) throw new Error("No se encontró Historial de Temporadas. No se eliminaron registros de competición.");
+  const fieldDefs = def.fieldDefinitions || [];
+  const keyFor = aliases => fieldDefs.find(field => aliases.includes(norm(field.key)) || aliases.includes(norm(field.name)))?.key;
+  const nameKey = keyFor(["temporada", "nombretemporada", "nombredelatemporada", "nombre"]);
+  const categoryKey = keyFor(["categoria", "juego", "juegoprincipal"]);
+  const dateKey = keyFor(["fechadecierre", "fechacierre", "fecha"]);
+  const rankingKey = keyFor(["ranking", "rankingjson", "resultados", "clasificacion", "clasificacionfinal"]);
+  const statusKey = keyFor(["estado", "status"]);
+  const fields = [];
+  if (nameKey) fields.push({ key: nameKey, value: seasonName });
+  if (categoryKey) fields.push({ key: categoryKey, value: category });
+  if (dateKey) fields.push({ key: dateKey, value: new Date().toISOString() });
+  if (rankingKey) fields.push({ key: rankingKey, value: JSON.stringify(ranking) });
+  if (statusKey) fields.push({ key: statusKey, value: "cerrada" });
+  if (!nameKey || !rankingKey) throw new Error("Historial de Temporadas debe tener campos de temporada y ranking/resultados para archivar de forma segura.");
+  const seasonSlug = String(seasonName).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 180);
+  const categorySlug = String(category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
+  const handle = ("temporada-" + seasonSlug + "-" + categorySlug).slice(0, 250).replace(/-+$/g, "");
+  const existing = await shopifyQuery(
+    'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle fields { key value } } }',
+    { type: def.type, handle }
+  );
+  if (existing?.metaobjectByHandle) {
+    const update = await shopifyQuery(
+      'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle } userErrors { field message } } }',
+      { id: existing.metaobjectByHandle.id, fields }
+    );
+    const updateErrors = update?.metaobjectUpdate?.userErrors || [];
+    if (updateErrors.length || !update?.metaobjectUpdate?.metaobject) throw new Error("No se pudo actualizar el histórico de la temporada existente: " + updateErrors.map(e => e.message).join("; "));
+    return update.metaobjectUpdate.metaobject;
+  }
+  const created = await shopifyQuery('mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: $type, handle: $handle, fields: $fields }) { metaobject { id handle } userErrors { field message } } }', { type: def.type, handle, fields });
+  const errors = created?.metaobjectCreate?.userErrors || [];
+  if (errors.length || !created?.metaobjectCreate?.metaobject) throw new Error("No se pudo guardar Historial de Temporadas: " + errors.map(e => e.message).join("; "));
+  return created.metaobjectCreate.metaobject;
+}
+
 async function handleSeasonAdmin(req, res, url, deps) {
   const { send, clean, shopifyQuery, fetchMetaobjects, normalizeRecord, filterLeaderboard } = deps;
   if (!url.pathname.startsWith("/api/admin/seasons")) return false;
@@ -173,13 +446,62 @@ async function handleSeasonAdmin(req, res, url, deps) {
     return true;
   }
 
-  async function buildPreview(category) {
+  async function memberDefinition(shopifyQuery) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const def = defs.find(item => norm(item.type) === norm("perfil_de_miembros")) || defs.find(item => norm(item.name).includes("perfil") && norm(item.name).includes("miembro"));
+  if (!def) throw new Error("No se encontró la definición Perfil de Miembros.");
+  return def;
+}
+
+
+async function createMemberProfile(shopifyQuery, members, row, category) {
+  const def = await memberDefinition(shopifyQuery);
+  const fieldsDef = def.fieldDefinitions || [];
+  const findKey = (...aliases) => {
+    const wanted = new Set(aliases.map(alias => String(alias).toLowerCase().replace(/[^a-z0-9]/g, "")));
+    const item = fieldsDef.find(field => wanted.has(String(field.key || "").toLowerCase().replace(/[^a-z0-9]/g, "")) || wanted.has(String(field.name || "").toLowerCase().replace(/[^a-z0-9]/g, "")));
+    return item?.key || null;
+  };
+  const idKey = findKey("identificador_de_miembro", "identificador_del_miembro", "identificador_miembro");
+  const nameKey = findKey("nombre_del_miembro", "nombre_de_miembro", "nombre", "miembro");
+  const guildKey = findKey("gremio", "nombre_del_gremio", "nombre_de_gremio");
+  const gameKey = findKey("juego", "juego_principal");
+  const titlesKey = findKey("titulos_obtenidos", "titulos_obtenidos_");
+  const titlesDef = fieldsDef.find(field => field.key === titlesKey);
+  if (!idKey || !nameKey) throw new Error("Perfil de Miembros necesita campos Nombre del Miembro e Identificador de Miembro para crear perfiles automáticamente.");
+  if (titlesKey && String(titlesDef?.type?.name || "").toLowerCase() !== "list.metaobject_reference") {
+    throw new Error("El campo Títulos Obtenidos del perfil debe ser list.metaobject_reference para enlazar registros de títulos obtenidos. Corrige la definición antes de crear perfiles.");
+  }
+  const id = await getNextMemberId(shopifyQuery, members);
+  const values = [
+    { key: idKey, value: id },
+    { key: nameKey, value: clean(row.player) || "Miembro Avalon" }
+  ];
+  if (guildKey) values.push({ key: guildKey, value: clean(row.guild) });
+  if (gameKey) values.push({ key: gameKey, value: category.toLowerCase().includes("grand cross") ? "Grand Cross" : "Origin" });
+  // An unset list-reference field is already empty; do not send a JSON string as if it were a reference list.
+  const handle = "miembro-" + id;
+  const result = await shopifyQuery(
+    'mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: {type: $type, handle: $handle, fields: $fields}) { metaobject { id handle fields { key value } } userErrors { field message } } }',
+    { type: def.type, handle, fields: values }
+  );
+  const errors = result?.metaobjectCreate?.userErrors || [];
+  if (errors.length) throw new Error("No se pudo crear el perfil " + id + ": " + errors.map(e => e.message).join("; "));
+  const created = result?.metaobjectCreate?.metaobject;
+  if (!created) throw new Error("Shopify no confirmó la creación del perfil " + id + ".");
+  members.push(created);
+  return created;
+}
+
+async function buildPreview(category) {
     const categoryText = category.toLocaleLowerCase();
     const categoryCode = categoryText.includes("grand cross") || categoryText.includes("grandcross") ? "7GC" : categoryText.includes("gremios") ? "7OriginG" : "7Origin";
-    const nodes = await fetchMetaobjects("registro_competicion");
+    const nodes = await fetchMetaobjects("registro_de_competicion");
     const params = new URLSearchParams({ category: categoryCode });
     const ranking = filterLeaderboard(nodes.map(normalizeRecord), params);
-    const memberNodes = await fetchMetaobjects("perfil_de_miembro");
+    const memberNodes = await fetchMetaobjects("perfil_de_miembros");
     const membersById = new Map();
     let duplicateIds = [];
     for (const member of memberNodes) {
@@ -192,16 +514,17 @@ async function handleSeasonAdmin(req, res, url, deps) {
     const assignments = ranking.map(row => {
       const memberId = memberIdentifier(row.fields || {});
       const member = memberId ? membersById.get(memberId.toLocaleLowerCase()) : null;
-      return { rank: row.rank, player: row.player, memberId: memberId || null, matchedMember: Boolean(member), memberHandle: member?.handle || null };
+      return { rank: row.rank, player: row.player, guild: row.guild || "", memberId: memberId || null, matchedMember: Boolean(member), memberHandle: member?.handle || null, willCreateProfile: !member };
     });
     return {
       ranking,
       titleAssignmentPreview: {
         membersWithId: membersById.size,
         matched: assignments.filter(item => item.matchedMember).length,
-        unmatched: assignments.filter(item => !item.matchedMember).map(({ rank, player, memberId }) => ({ rank, player, memberId })),
+        unmatched: assignments.filter(item => !item.matchedMember).map(({ rank, player, guild, memberId }) => ({ rank, player, guild, memberId })),
+        profilesToCreate: assignments.filter(item => !item.matchedMember).length,
         duplicateMemberIds: [...new Set(duplicateIds)],
-        note: "Cada registro de competición debe incluir identificador_de_miembro (ej. avalon001). No se asocian perfiles por nombre."
+        note: "Los registros con identificador existente se enlazan por ID; cuando el ID no existe se creará un perfil con el siguiente identificador libre. Nunca se empareja por nombre."
       }
     };
   }
@@ -240,28 +563,52 @@ async function handleSeasonAdmin(req, res, url, deps) {
         if (preview.titleAssignmentPreview.duplicateMemberIds.length) {
           return safeSend(409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
         }
-        if (preview.titleAssignmentPreview.unmatched.length) {
-          return safeSend(409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_de_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
+        // Validate catalog and required metaobject definitions before making any changes.
+        await validateSeasonSetup(shopifyQuery, ranking, category);
+        // Existing IDs must map to profiles; new profiles are only for rows without an ID.
+        const rowIds = ranking.map(row => memberIdentifier(row.fields || "")).filter(Boolean).map(id => id.toLocaleLowerCase());
+        if (new Set(rowIds).size !== rowIds.length) {
+          return safeSend(409, { ok: false, error: "El ranking contiene identificadores de miembro repetidos. No se archivó ni se procesó nada." });
         }
 
-        // This flow uses only the merchant-created member and competition metaobjects.
-        // Do not create/update the app-reserved archive definition: Shopify rejects that type.
-        const members = await fetchMetaobjects("perfil_de_miembro");
+        // Persist the complete ranking to Historial de Temporadas before mutating member profiles.
+        const history = await saveSeasonHistory(shopifyQuery, clean(data.seasonName) || category + " · " + new Date().toLocaleDateString("es-MX"), category, ranking);
+        const members = await fetchMetaobjects("perfil_de_miembros");
         const byId = new Map();
         for (const member of members) {
           const id = memberIdentifier(memberFieldMap(member));
-          if (id) byId.set(id.toLocaleLowerCase(), member);
+          if (id) {
+            const key = id.toLocaleLowerCase();
+            if (byId.has(key)) return safeSend(409, { ok: false, error: "Se detectó un identificador duplicado en perfiles. Corrige el duplicado antes de cerrar.", duplicateId: id });
+            byId.set(key, member);
+          }
         }
 
         const awards = [];
         for (const row of ranking) {
-          const memberId = memberIdentifier(row.fields || {});
-          const member = byId.get(memberId.toLocaleLowerCase());
+          let memberId = memberIdentifier(row.fields || {});
+          let member = memberId ? byId.get(memberId.toLocaleLowerCase()) : null;
+          if (!member) {
+            if (memberId) {
+              throw new Error("El ranking trae el identificador " + memberId + " para " + clean(row.player) + ", pero no existe ese perfil. Corrige el ID del registro o crea el perfil correspondiente antes de cerrar; no se asignó otro ID automáticamente.");
+            }
+            const existingByName = members.filter(candidate => {
+              const fields = memberFieldMap(candidate);
+              return String(fields.nombre_del_miembro || fields.nombre_de_miembro || fields.nombre || "").trim().toLocaleLowerCase() === clean(row.player).toLocaleLowerCase();
+            });
+            if (existingByName.length > 0) {
+              throw new Error("Ya existe un perfil con el nombre " + clean(row.player) + " pero el registro del ranking no tiene ID. Añade el identificador correcto al registro; no se creará un perfil duplicado.");
+            }
+            member = await createMemberProfile(shopifyQuery, members, row, category);
+            memberId = memberIdentifier(memberFieldMap(member));
+            byId.set(memberId.toLocaleLowerCase(), member);
+          }
           const title = clean(data.title) || titleForRank(row.rank, category, "");
           const titleMetaobject = await resolveCatalogTitle(shopifyQuery, title);
           console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle + " title=" + titleMetaobject.handle);
-          const result = await updateMemberTitles(shopifyQuery, member, titleMetaobject);
-          awards.push({ rank: row.rank, player: row.player, memberId, title, titleId: titleMetaobject.id, updated: result.updated, reason: result.reason || null });
+          const earnedTitle = await createEarnedTitleRecord(shopifyQuery, member, titleMetaobject, row, category, clean(data.seasonName) || category);
+          const result = await updateMemberTitles(shopifyQuery, member, earnedTitle);
+          awards.push({ rank: row.rank, player: row.player, memberId, title, catalogTitleId: titleMetaobject.id, earnedTitleId: earnedTitle.id, updated: result.updated, reason: result.reason || null });
         }
 
         // Delete only the competition records selected for this category, after all titles were saved.
@@ -274,13 +621,14 @@ async function handleSeasonAdmin(req, res, url, deps) {
 
         return safeSend(201, {
           ok: true,
-          message: "Títulos asignados y registros de la categoría procesada eliminados.",
+          message: "Ranking guardado en Historial de Temporadas, títulos asignados y registros de la categoría procesada eliminados.",
+          historyId: history.id,
           rankingCount: ranking.length,
           deletedRecords,
           titlesGranted: awards.filter(award => award.updated).length,
           titlesAlreadyPresent: awards.filter(award => !award.updated).length,
           awards,
-          note: "Se eliminaron solo los registros incluidos en la categoría procesada; los títulos se asignaron por identificador permanente. El proceso no crea ni modifica definiciones de metaobjetos."
+          note: "Se eliminaron solo los registros incluidos en la categoría procesada; los títulos se asignaron por identificador permanente. La definición y el registro del contador se crean automáticamente cuando hacen falta."
         });
     } catch (error) {
       safeSend(502, { ok: false, error: error.message || "No se pudo procesar la categoría." });
@@ -292,4 +640,4 @@ async function handleSeasonAdmin(req, res, url, deps) {
   return true;
 }
 
-module.exports = { handleSeasonAdmin };
+module.exports = { handleSeasonAdmin, getNextMemberId, getNextMemberIdForPreview };

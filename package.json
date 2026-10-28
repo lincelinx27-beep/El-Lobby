@@ -5,6 +5,8 @@
   "description": "Sitio y servicios de la comunidad Avalon",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test",
+    "check": "node --check server.js && node --check season-admin.js"
   }
 }
