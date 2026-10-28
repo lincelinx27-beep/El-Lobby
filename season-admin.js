@@ -178,24 +178,30 @@ async function handleSeasonAdmin(req, res, url, deps) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/seasons/close") {
-    let body = "";
-    req.on("data", chunk => {
-      body += chunk;
-      if (body.length > 100000) req.destroy();
-    });
-    req.on("end", async () => {
-      try {
-        const data = JSON.parse(body || "{}");
+    try {
+      const body = await new Promise((resolve, reject) => {
+        let raw = "";
+        req.on("data", chunk => {
+          raw += chunk;
+          if (raw.length > 100000) {
+            reject(new Error("El cuerpo de la solicitud supera el límite permitido."));
+            req.destroy();
+          }
+        });
+        req.on("end", () => resolve(raw));
+        req.on("error", reject);
+      });
+      const data = JSON.parse(body || "{}");
         const category = clean(data.category) || "Origin · Jefes";
         const archiveName = "Única";
         const preview = await buildPreview(category);
         const ranking = preview.ranking;
-        if (!ranking.length) return send(res, 409, { ok: false, error: "No hay registros para la categoría elegida; no se archivó ni se eliminó nada." });
+        if (!ranking.length) return safeSend(409, { ok: false, error: "No hay registros para la categoría elegida; no se archivó ni se eliminó nada." });
         if (preview.titleAssignmentPreview.duplicateMemberIds.length) {
-          return send(res, 409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
+          return safeSend(409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
         }
         if (preview.titleAssignmentPreview.unmatched.length) {
-          return send(res, 409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_de_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
+          return safeSend(409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_de_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
         }
 
         const archives = await fetchMetaobjects("avalon_season_archive");
@@ -204,7 +210,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
           return clean(fields.category).toLocaleLowerCase() === category.toLocaleLowerCase();
         });
         if (matchingArchive && clean(memberFieldMap(matchingArchive).archive_status).toLocaleLowerCase() === "closed") {
-          return send(res, 409, { ok: false, error: "Esta categoría ya fue procesada. No se duplicaron títulos ni se borraron registros." });
+          return safeSend(409, { ok: false, error: "Esta categoría ya fue procesada. No se duplicaron títulos ni se borraron registros." });
         }
 
         const members = await fetchMetaobjects("perfil_de_miembro");
@@ -246,7 +252,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
           throw new Error("FALLÓ LA ELIMINACIÓN después de guardar histórico y títulos (" + deletedRecords + "/" + ranking.length + "). No vuelvas a ejecutar; conserva los registros restantes. Detalle: " + deleteError.message);
         }
 
-        return send(res, 201, {
+        return safeSend(201, {
           ok: true,
           message: "Ranking archivado, títulos asignados y registros procesados eliminados.",
           archive: { id: archive.id, handle: archive.handle, status: "closed" },
@@ -257,10 +263,9 @@ async function handleSeasonAdmin(req, res, url, deps) {
           awards,
           note: "El histórico conserva el ranking. Se eliminaron solo los registros incluidos en la categoría procesada; los títulos se asignaron por identificador permanente."
         });
-      } catch (error) {
-        safeSend(502, { ok: false, error: error.message || "No se pudo cerrar la temporada." });
-      }
-    });
+    } catch (error) {
+      safeSend(502, { ok: false, error: error.message || "No se pudo procesar la categoría." });
+    }
     return true;
   }
 
