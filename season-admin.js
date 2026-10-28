@@ -41,36 +41,39 @@ async function createSeasonArchive(shopifyQuery, name, category, ranking) {
   return result.metaobjectCreate.metaobject;
 }
 
-// Update a member's Títulos Obtenidos field in the existing perfil_de_miembro metaobject.
-async function updateMemberTitles(shopifyQuery, member, title, awardKey) {
-  const fields = Object.fromEntries((member.fields || []).map(field => [field.key, field.value]));
-  const currentRaw = fields.titulos_obtenidos ?? fields["títulos_obtenidos"] ?? fields.titulos_obtenidos_ ?? fields["títulos_obtenidos_"] ?? "";
-  const current = currentRaw ? String(currentRaw).split(/\\s*[|;\\n]\\s*/).map(v => v.trim()).filter(Boolean) : [];
-  // Titles are plain text in the merchant-defined field. Store a unique, human-readable
-  // season/category/title entry and don't append it twice.
-  const normalizedExisting = new Set(current.map(v => v.toLocaleLowerCase()));
-  if (normalizedExisting.has(title.toLocaleLowerCase())) return { updated: false, reason: "already-awarded" };
-
-  const titleValue = title;
-  const titleFieldKey = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"].find(key => fields[key] !== undefined);
-  if (!titleFieldKey) {
-    return { updated: false, reason: "missing-titulos_obtenidos-field" };
-  }
-  const nextValue = [...current, titleValue].join(" | ");
-  const mutation = await shopifyQuery(
-    'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
-    { id: member.id, fields: [{ key: titleFieldKey, value: nextValue }] }
-  );
-  const errors = mutation?.metaobjectUpdate?.userErrors || [];
-  if (errors.length) throw new Error(errors.map(e => e.message).join("; "));
-  if (!mutation?.metaobjectUpdate?.metaobject) throw new Error("Shopify no confirmó la actualización del perfil " + member.handle);
-  return { updated: true };
-}
-
-function fieldMapForMember(node) {
+// Map member fields. Awards are stored in the existing plain-text Títulos Obtenidos field.
+function memberFieldMap(node) {
   const out = {};
   for (const field of node.fields || []) out[field.key] = field.value;
   return out;
+}
+
+function memberIdentifier(fields) {
+  return String(fields.identificador_miembro || fields.identificador_del_miembro || "").trim();
+}
+
+function existingTitles(raw) {
+  return String(raw || "").split(/\\s*[|;\\n]\\s*/).map(v => v.trim()).filter(Boolean);
+}
+
+async function updateMemberTitles(shopifyQuery, member, awardTitle) {
+  const fields = memberFieldMap(member);
+  const fieldKey = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"].find(key => fields[key] !== undefined);
+  if (!fieldKey) throw new Error("El perfil " + member.handle + " no tiene el campo Títulos Obtenidos con una clave compatible.");
+
+  const titles = existingTitles(fields[fieldKey]);
+  if (titles.some(title => title.toLocaleLowerCase() === awardTitle.toLocaleLowerCase())) {
+    return { updated: false, reason: "already-awarded" };
+  }
+
+  const result = await shopifyQuery(
+    'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
+    { id: member.id, fields: [{ key: fieldKey, value: [...titles, awardTitle].join(" | ") }] }
+  );
+  const errors = result?.metaobjectUpdate?.userErrors || [];
+  if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
+  if (!result?.metaobjectUpdate?.metaobject) throw new Error("Shopify no confirmó la actualización del perfil " + member.handle);
+  return { updated: true };
 }
 
 async function handleSeasonAdmin(req, res, url, deps) {
@@ -85,42 +88,50 @@ async function handleSeasonAdmin(req, res, url, deps) {
     return true;
   }
 
+  async function buildPreview(season, category) {
+    const shortCategory = category.includes("·") ? category.split("·").pop().trim() : category;
+    const nodes = await fetchMetaobjects("registro_competicion");
+    const params = new URLSearchParams({ category: shortCategory });
+    const ranking = filterLeaderboard(nodes.map(normalizeRecord), params)
+      .filter(record => record.season.toLocaleLowerCase() === season.toLocaleLowerCase());
+    const memberNodes = await fetchMetaobjects("perfil_de_miembro");
+    const membersById = new Map();
+    let duplicateIds = [];
+    for (const member of memberNodes) {
+      const id = memberIdentifier(memberFieldMap(member));
+      if (!id) continue;
+      const key = id.toLocaleLowerCase();
+      if (membersById.has(key)) duplicateIds.push(id);
+      else membersById.set(key, member);
+    }
+    const assignments = ranking.map(row => {
+      const memberId = memberIdentifier(row.fields || {});
+      const member = memberId ? membersById.get(memberId.toLocaleLowerCase()) : null;
+      return { rank: row.rank, player: row.player, memberId: memberId || null, matchedMember: Boolean(member), memberHandle: member?.handle || null };
+    });
+    return {
+      ranking,
+      titleAssignmentPreview: {
+        membersWithId: membersById.size,
+        matched: assignments.filter(item => item.matchedMember).length,
+        unmatched: assignments.filter(item => !item.matchedMember).map(({ rank, player, memberId }) => ({ rank, player, memberId })),
+        duplicateMemberIds: [...new Set(duplicateIds)],
+        note: "Cada registro de competición debe incluir identificador_miembro (ej. avalon001). No se asocian perfiles por nombre."
+      }
+    };
+  }
+
   if (req.method === "GET" && url.pathname === "/api/admin/seasons/preview") {
     try {
       const season = clean(url.searchParams.get("season"));
       const category = clean(url.searchParams.get("category")) || "Origin · Jefes";
-      const shortCategory = category.includes("·") ? category.split("·").pop().trim() : category;
-      const nodes = await fetchMetaobjects("registro_competicion");
-      const params = new URLSearchParams({ category: shortCategory });
-      const seasonNeedle = season.toLocaleLowerCase().trim();
-      const ranking = filterLeaderboard(nodes.map(normalizeRecord), params)
-        .filter(r => !seasonNeedle || r.season.toLocaleLowerCase() === seasonNeedle);
-      const members = await fetchMetaobjects("perfil_de_miembro");
-      const byId = new Map();
-      for (const member of members) {
-        const fields = fieldMapForMember(member);
-        const id = clean(fields.identificador_miembro || fields.identificador_del_miembro);
-        if (id) byId.set(id.toLocaleLowerCase(), { id: member.id, handle: member.handle, fields: member.fields });
-      }
-      const matched = ranking.map(row => {
-        const fields = row.fields || {};
-        const player = clean(row.player);
-        const idField = clean(fields.identificador_miembro || fields.identificador_del_miembro);
-        const member = idField ? byId.get(idField.toLocaleLowerCase()) : null;
-        return { rank: row.rank, player, memberId: idField || null, matchedMember: Boolean(member), memberHandle: member?.handle || null };
-      });
-      return send(res, 200, {
-        ok: true, season, category, count: ranking.length, ranking,
-        titleAssignmentPreview: {
-          membersWithId: byId.size,
-          matched: matched.filter(x => x.matchedMember).length,
-          unmatched: matched.filter(x => !x.matchedMember).map(x => ({ rank: x.rank, player: x.player, memberId: x.memberId })),
-          note: "El registro de competición necesita incluir el campo identificador_miembro (por ejemplo avalon001) para asociarlo de forma segura."
-        }
-      });
+      if (!season) return send(res, 400, { ok: false, error: "Indica la temporada exacta para previsualizar." });
+      const preview = await buildPreview(season, category);
+      return send(res, 200, { ok: true, season, category, count: preview.ranking.length, ranking: preview.ranking, titleAssignmentPreview: preview.titleAssignmentPreview });
     } catch (error) {
-      return send(res, 502, { ok: false, error: error.message || "Error consultando el ranking." });
+      send(res, 502, { ok: false, error: error.message || "Error consultando el ranking." });
     }
+    return true;
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/seasons/close") {
@@ -134,90 +145,57 @@ async function handleSeasonAdmin(req, res, url, deps) {
         const data = JSON.parse(body || "{}");
         const season = clean(data.season);
         const category = clean(data.category) || "Origin · Jefes";
-        if (!season) return send(res, 400, { ok: false, error: "Escribe el nombre de la temporada." });
+        if (!season) return send(res, 400, { ok: false, error: "Escribe el nombre exacto de la temporada." });
 
-        // Reject fuzzy matching: a season name must match exactly before closing.
-        const shortCategory = category.includes("·") ? category.split("·").pop().trim() : category;
-        const nodes = await fetchMetaobjects("registro_competicion");
-        const params = new URLSearchParams({ category: shortCategory });
-        const ranking = filterLeaderboard(nodes.map(normalizeRecord), params)
-          .filter(r => r.season.toLocaleLowerCase() === season.toLocaleLowerCase());
-        if (!ranking.length) {
-          return send(res, 409, { ok: false, error: "No hay registros para esa temporada y categoría; no se archivó nada." });
+        const preview = await buildPreview(season, category);
+        const ranking = preview.ranking;
+        if (!ranking.length) return send(res, 409, { ok: false, error: "No hay registros para esa temporada y categoría; no se archivó nada." });
+        if (preview.titleAssignmentPreview.duplicateMemberIds.length) {
+          return send(res, 409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
+        }
+        if (preview.titleAssignmentPreview.unmatched.length) {
+          return send(res, 409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
         }
 
-        const members = await fetchMetaobjects("perfil_de_miembro");
-        const byId = new Map();
-        const memberFieldMaps = new Map();
-        for (const member of members) {
-          const fields = fieldMapForMember(member);
-          const id = clean(fields.identificador_miembro || fields.identificador_del_miembro);
-          if (id) {
-            const key = id.toLocaleLowerCase();
-            if (byId.has(key)) throw new Error("Hay identificadores de miembro duplicados: " + id + ". No se cerró la temporada.");
-            byId.set(key, member);
-            memberFieldMaps.set(member.id, fields);
-          }
-        }
-
-        // Safe linking: the competition records need the same permanent ID. Never match on display name.
-        const unmatched = [];
-        const awards = [];
-        const awardTitle = clean(data.title) || (season + " · " + category);
-        for (const row of ranking) {
-          const fields = row.fields || {};
-          const memberId = clean(fields.identificador_miembro || fields.identificador_del_miembro);
-          const member = memberId ? byId.get(memberId.toLocaleLowerCase()) : null;
-          if (!member) {
-            unmatched.push({ rank: row.rank, player: row.player, memberId: memberId || null });
-            continue;
-          }
-          awards.push({ rank: row.rank, player: row.player, memberId, member });
-        }
-        if (unmatched.length) {
-          return send(res, 409, {
-            ok: false,
-            error: "No se archivó ni cerró la temporada porque hay registros sin un perfil identificable por ID. Añade identificador_miembro a cada registro de competición y vuelve a intentarlo.",
-            unmatched: unmatched.slice(0, 50),
-            totalUnmatched: unmatched.length
-          });
-        }
-
-        // Check for a prior archive for this exact season+category before mutating anything.
-        const existingArchives = await fetchMetaobjects("avalon_season_archive");
-        const alreadyClosed = existingArchives.some(node => {
-          const f = fieldMapForMember(node);
-          return clean(f.season_name).toLocaleLowerCase() === season.toLocaleLowerCase()
-            && clean(f.category).toLocaleLowerCase() === category.toLocaleLowerCase()
-            && clean(f.archive_status).toLocaleLowerCase() === "closed";
+        const archives = await fetchMetaobjects("avalon_season_archive");
+        const alreadyClosed = archives.some(node => {
+          const fields = memberFieldMap(node);
+          return clean(fields.season_name).toLocaleLowerCase() === season.toLocaleLowerCase()
+            && clean(fields.category).toLocaleLowerCase() === category.toLocaleLowerCase()
+            && clean(fields.archive_status).toLocaleLowerCase() === "closed";
         });
         if (alreadyClosed) return send(res, 409, { ok: false, error: "Esta temporada y categoría ya están cerradas. No se duplicó el archivo ni se reasignaron títulos." });
 
-        // Create the historical snapshot first; if this fails, profiles remain unchanged.
-        const archive = await createSeasonArchive(shopifyQuery, season, category, ranking);
-        const granted = [];
-        const skipped = [];
-        for (const award of awards) {
-          const uniqueTitle = awardTitle;
-          const result = await updateMemberTitles(shopifyQuery, award.member, uniqueTitle, season + "|" + category);
-          (result.updated ? granted : skipped).push({
-            rank: award.rank, player: award.player, memberId: award.memberId, title: uniqueTitle,
-            reason: result.reason || null
-          });
+        const members = await fetchMetaobjects("perfil_de_miembro");
+        const byId = new Map();
+        for (const member of members) {
+          const id = memberIdentifier(memberFieldMap(member));
+          if (id) byId.set(id.toLocaleLowerCase(), member);
         }
+
+        // The durable snapshot is written first. No title mutation happens if archiving fails.
+        const archive = await createSeasonArchive(shopifyQuery, season, category, ranking);
+        const awards = [];
+        for (const row of ranking) {
+          const memberId = memberIdentifier(row.fields || {});
+          const member = byId.get(memberId.toLocaleLowerCase());
+          const title = clean(data.title) || (season + " · " + category);
+          const result = await updateMemberTitles(shopifyQuery, member, title);
+          awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
+        }
+
         return send(res, 201, {
           ok: true,
           message: "Temporada archivada y títulos procesados.",
           archive,
           rankingCount: ranking.length,
-          titlesGranted: granted.length,
-          titlesSkipped: skipped.length,
-          granted,
-          skipped,
-          note: "Los registros originales se conservaron. La asociación usa únicamente identificador_miembro."
+          titlesGranted: awards.filter(award => award.updated).length,
+          titlesAlreadyPresent: awards.filter(award => !award.updated).length,
+          awards,
+          note: "Los registros originales se conservaron. Los miembros se identificaron exclusivamente por identificador_miembro."
         });
       } catch (error) {
-        return send(res, 502, { ok: false, error: error.message || "No se pudo cerrar la temporada." });
+        send(res, 502, { ok: false, error: error.message || "No se pudo cerrar la temporada." });
       }
     });
     return true;
