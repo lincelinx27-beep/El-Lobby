@@ -15,7 +15,7 @@ async function ensureSeasonDefinition(shopifyQuery) {
   const errors = result?.metaobjectDefinitionCreate?.userErrors || [];
   if (errors.length) throw new Error(errors.map(e => e.message).join("; "));
   if (!result?.metaobjectDefinitionCreate?.metaobjectDefinition) {
-    throw new Error("Shopify no confirmó la creación de la definición de archivo.");
+    throw new Error("ARCHIVO / definición avalon_season_archive: Shopify no confirmó la creación. Revisa si este tipo está reservado a otra app.");
   }
 }
 
@@ -36,7 +36,7 @@ async function createSeasonArchive(shopifyQuery, name, category, ranking) {
   const errors = result?.metaobjectCreate?.userErrors || [];
   if (errors.length) throw new Error(errors.map(e => e.message).join("; "));
   if (!result?.metaobjectCreate?.metaobject) {
-    throw new Error("Shopify no confirmó el archivo de la temporada.");
+    throw new Error("ARCHIVO / metaobjectCreate avalon_season_archive: Shopify no confirmó la creación. Comprueba la propiedad del tipo de metaobjeto.");
   }
   return result.metaobjectCreate.metaobject;
 }
@@ -63,7 +63,7 @@ async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
   );
   const errors = result?.metaobjectUpdate?.userErrors || [];
   if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
-  if (!result?.metaobjectUpdate?.metaobject) throw new Error("Shopify no confirmó el estado del archivo de temporada.");
+  if (!result?.metaobjectUpdate?.metaobject) throw new Error("ARCHIVO / metaobjectUpdate avalon_season_archive: Shopify no confirmó el cambio de estado.");
 }
 
 function titleForRank(rank, category, customTitle) {
@@ -75,7 +75,7 @@ function titleForRank(rank, category, customTitle) {
 async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   const fields = memberFieldMap(member);
   const fieldKey = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"].find(key => fields[key] !== undefined);
-  if (!fieldKey) throw new Error("El perfil " + member.handle + " no tiene el campo Títulos Obtenidos con una clave compatible.");
+  if (!fieldKey) throw new Error("TÍTULOS / perfil_de_miembro/" + member.handle + ": no se encontró la clave compatible del campo Títulos Obtenidos. Campos recibidos: " + Object.keys(fields).join(", "));
 
   const definition = await shopifyQuery('query { metaobjectDefinitionByType(type: "perfil_de_miembro") { fieldDefinitions { key type { name } } } }');
   const fieldDefinition = (definition?.metaobjectDefinitionByType?.fieldDefinitions || []).find(field => field.key === fieldKey);
@@ -104,7 +104,7 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   );
   const errors = result?.metaobjectUpdate?.userErrors || [];
   if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
-  if (!result?.metaobjectUpdate?.metaobject) throw new Error("Shopify no confirmó la actualización del perfil " + member.handle);
+  if (!result?.metaobjectUpdate?.metaobject) throw new Error("TÍTULOS / metaobjectUpdate perfil_de_miembro/" + member.handle + ": Shopify no confirmó la actualización.");
   return { updated: true };
 }
 
@@ -116,7 +116,7 @@ async function deleteCompetitionRecord(shopifyQuery, id) {
   const errors = result?.metaobjectDelete?.userErrors || [];
   if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
   if (result?.metaobjectDelete?.deletedId !== id) {
-    throw new Error("Shopify no confirmó la eliminación del registro " + id);
+    throw new Error("ELIMINACIÓN / metaobjectDelete registro_competicion id=" + id + ": Shopify no confirmó la eliminación.");
   }
 }
 
@@ -190,7 +190,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
         const archiveName = "Única";
         const preview = await buildPreview(category);
         const ranking = preview.ranking;
-        if (!ranking.length) return send(res, 409, { ok: false, error: "No hay registros para esa temporada y categoría; no se archivó nada." });
+        if (!ranking.length) return send(res, 409, { ok: false, error: "No hay registros para la categoría elegida; no se archivó ni se eliminó nada." });
         if (preview.titleAssignmentPreview.duplicateMemberIds.length) {
           return send(res, 409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
         }
@@ -215,6 +215,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
         }
 
         // Reuse an interrupted processing archive so a retry won't create duplicates.
+        console.log("[Avalon admin] etapa=archivo category=" + category + " registros=" + ranking.length);
         const archive = matchingArchive || await createSeasonArchive(shopifyQuery, archiveName, category, ranking);
         await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
         const awards = [];
@@ -223,24 +224,26 @@ async function handleSeasonAdmin(req, res, url, deps) {
             const memberId = memberIdentifier(row.fields || {});
             const member = byId.get(memberId.toLocaleLowerCase());
             const title = titleForRank(row.rank, category, clean(data.title));
+            console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle);
             const result = await updateMemberTitles(shopifyQuery, member, title);
             awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
           }
           await setSeasonArchiveStatus(shopifyQuery, archive.id, "closed");
         } catch (awardError) {
           // The archive remains marked processing so a safe retry can skip already-awarded titles.
-          throw new Error("El archivo quedó guardado como processing; algunos perfiles pueden haberse actualizado. Corrige el problema y vuelve a ejecutar el cierre. Detalle: " + awardError.message);
+          throw new Error("FALLÓ LA ASIGNACIÓN DE TÍTULOS. El archivo quedó en processing; no se han eliminado registros. Detalle: " + awardError.message);
         }
 
         let deletedRecords = 0;
         try {
           for (const row of ranking) {
+            console.log("[Avalon admin] etapa=eliminar registro=" + row.id);
             await deleteCompetitionRecord(shopifyQuery, row.id);
             deletedRecords++;
           }
         } catch (deleteError) {
           await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
-          throw new Error("Títulos e histórico guardados, pero la eliminación quedó parcial (" + deletedRecords + "/" + ranking.length + "). No vuelvas a procesar esta categoría todavía. Detalle: " + deleteError.message);
+          throw new Error("FALLÓ LA ELIMINACIÓN después de guardar histórico y títulos (" + deletedRecords + "/" + ranking.length + "). No vuelvas a ejecutar; conserva los registros restantes. Detalle: " + deleteError.message);
         }
 
         return send(res, 201, {
