@@ -66,10 +66,10 @@ async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
   if (!result?.metaobjectUpdate?.metaobject) throw new Error("Shopify no confirmó el estado del archivo de temporada.");
 }
 
-function titleForRank(rank, season, category, customTitle) {
+function titleForRank(rank, category, customTitle) {
   if (customTitle) return customTitle;
   const distinction = rank === 1 ? "Campeón" : rank === 2 ? "Subcampeón" : rank === 3 ? "Tercer lugar" : "Puesto " + rank;
-  return distinction + " · " + season + " · " + category;
+  return distinction + " · " + category;
 }
 
 async function updateMemberTitles(shopifyQuery, member, awardTitle) {
@@ -108,25 +108,37 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   return { updated: true };
 }
 
+async function deleteCompetitionRecord(shopifyQuery, id) {
+  const result = await shopifyQuery(
+    'mutation($id: ID!) { metaobjectDelete(id: $id) { deletedId userErrors { field message } } }',
+    { id }
+  );
+  const errors = result?.metaobjectDelete?.userErrors || [];
+  if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
+  if (result?.metaobjectDelete?.deletedId !== id) {
+    throw new Error("Shopify no confirmó la eliminación del registro " + id);
+  }
+}
+
 async function handleSeasonAdmin(req, res, url, deps) {
   const { send, clean, shopifyQuery, fetchMetaobjects, normalizeRecord, filterLeaderboard } = deps;
   if (!url.pathname.startsWith("/api/admin/seasons")) return false;
+  const safeSend = (status, payload) => { if (res.writableEnded || res.destroyed) return false; send(res, status, payload); return true; };
   if (!ADMIN_TOKEN) {
-    send(res, 503, { ok: false, error: "Falta configurar AVALON_ADMIN_TOKEN en el servidor." });
+    safeSend(503, { ok: false, error: "Falta configurar AVALON_ADMIN_TOKEN en el servidor." });
     return true;
   }
   if (!authorized(req)) {
-    send(res, 401, { ok: false, error: "Acceso denegado. Introduce la clave de administrador." });
+    safeSend(401, { ok: false, error: "Acceso denegado. Introduce la clave de administrador." });
     return true;
   }
 
-  async function buildPreview(season, category) {
+  async function buildPreview(category) {
     const categoryText = category.toLocaleLowerCase();
     const categoryCode = categoryText.includes("grand cross") || categoryText.includes("grandcross") ? "7GC" : categoryText.includes("gremios") ? "7OriginG" : "7Origin";
     const nodes = await fetchMetaobjects("registro_competicion");
     const params = new URLSearchParams({ category: categoryCode });
-    const ranking = filterLeaderboard(nodes.map(normalizeRecord), params)
-      .filter(record => record.season.toLocaleLowerCase() === season.toLocaleLowerCase());
+    const ranking = filterLeaderboard(nodes.map(normalizeRecord), params);
     const memberNodes = await fetchMetaobjects("perfil_de_miembro");
     const membersById = new Map();
     let duplicateIds = [];
@@ -156,13 +168,11 @@ async function handleSeasonAdmin(req, res, url, deps) {
 
   if (req.method === "GET" && url.pathname === "/api/admin/seasons/preview") {
     try {
-      const season = clean(url.searchParams.get("season"));
       const category = clean(url.searchParams.get("category")) || "Origin · Jefes";
-      if (!season) return send(res, 400, { ok: false, error: "Indica la temporada exacta para previsualizar." });
-      const preview = await buildPreview(season, category);
-      return send(res, 200, { ok: true, season, category, count: preview.ranking.length, ranking: preview.ranking, titleAssignmentPreview: preview.titleAssignmentPreview });
+      const preview = await buildPreview(category);
+      return send(res, 200, { ok: true, category, count: preview.ranking.length, ranking: preview.ranking, titleAssignmentPreview: preview.titleAssignmentPreview });
     } catch (error) {
-      send(res, 502, { ok: false, error: error.message || "Error consultando el ranking." });
+      safeSend(502, { ok: false, error: error.message || "Error consultando el ranking." });
     }
     return true;
   }
@@ -176,11 +186,9 @@ async function handleSeasonAdmin(req, res, url, deps) {
     req.on("end", async () => {
       try {
         const data = JSON.parse(body || "{}");
-        const season = clean(data.season);
         const category = clean(data.category) || "Origin · Jefes";
-        if (!season) return send(res, 400, { ok: false, error: "Escribe el nombre exacto de la temporada." });
-
-        const preview = await buildPreview(season, category);
+        const archiveName = "Única";
+        const preview = await buildPreview(category);
         const ranking = preview.ranking;
         if (!ranking.length) return send(res, 409, { ok: false, error: "No hay registros para esa temporada y categoría; no se archivó nada." });
         if (preview.titleAssignmentPreview.duplicateMemberIds.length) {
@@ -193,11 +201,10 @@ async function handleSeasonAdmin(req, res, url, deps) {
         const archives = await fetchMetaobjects("avalon_season_archive");
         const matchingArchive = archives.find(node => {
           const fields = memberFieldMap(node);
-          return clean(fields.season_name).toLocaleLowerCase() === season.toLocaleLowerCase()
-            && clean(fields.category).toLocaleLowerCase() === category.toLocaleLowerCase();
+          return clean(fields.category).toLocaleLowerCase() === category.toLocaleLowerCase();
         });
         if (matchingArchive && clean(memberFieldMap(matchingArchive).archive_status).toLocaleLowerCase() === "closed") {
-          return send(res, 409, { ok: false, error: "Esta temporada y categoría ya están cerradas. No se duplicó el archivo ni se reasignaron títulos." });
+          return send(res, 409, { ok: false, error: "Esta categoría ya fue procesada. No se duplicaron títulos ni se borraron registros." });
         }
 
         const members = await fetchMetaobjects("perfil_de_miembro");
@@ -208,14 +215,14 @@ async function handleSeasonAdmin(req, res, url, deps) {
         }
 
         // Reuse an interrupted processing archive so a retry won't create duplicates.
-        const archive = matchingArchive || await createSeasonArchive(shopifyQuery, season, category, ranking);
+        const archive = matchingArchive || await createSeasonArchive(shopifyQuery, archiveName, category, ranking);
         await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
         const awards = [];
         try {
           for (const row of ranking) {
             const memberId = memberIdentifier(row.fields || {});
             const member = byId.get(memberId.toLocaleLowerCase());
-            const title = titleForRank(row.rank, season, category, clean(data.title));
+            const title = titleForRank(row.rank, category, clean(data.title));
             const result = await updateMemberTitles(shopifyQuery, member, title);
             awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
           }
@@ -225,18 +232,30 @@ async function handleSeasonAdmin(req, res, url, deps) {
           throw new Error("El archivo quedó guardado como processing; algunos perfiles pueden haberse actualizado. Corrige el problema y vuelve a ejecutar el cierre. Detalle: " + awardError.message);
         }
 
+        let deletedRecords = 0;
+        try {
+          for (const row of ranking) {
+            await deleteCompetitionRecord(shopifyQuery, row.id);
+            deletedRecords++;
+          }
+        } catch (deleteError) {
+          await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
+          throw new Error("Títulos e histórico guardados, pero la eliminación quedó parcial (" + deletedRecords + "/" + ranking.length + "). No vuelvas a procesar esta categoría todavía. Detalle: " + deleteError.message);
+        }
+
         return send(res, 201, {
           ok: true,
-          message: "Temporada archivada y títulos procesados.",
+          message: "Ranking archivado, títulos asignados y registros procesados eliminados.",
           archive: { id: archive.id, handle: archive.handle, status: "closed" },
           rankingCount: ranking.length,
+          deletedRecords,
           titlesGranted: awards.filter(award => award.updated).length,
           titlesAlreadyPresent: awards.filter(award => !award.updated).length,
           awards,
-          note: "Los registros originales se conservaron. Los títulos se asignaron por identificador_miembro y posición."
+          note: "El histórico conserva el ranking. Se eliminaron solo los registros incluidos en la categoría procesada; los títulos se asignaron por identificador permanente."
         });
       } catch (error) {
-        send(res, 502, { ok: false, error: error.message || "No se pudo cerrar la temporada." });
+        safeSend(502, { ok: false, error: error.message || "No se pudo cerrar la temporada." });
       }
     });
     return true;
