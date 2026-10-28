@@ -204,15 +204,8 @@ async function handleSeasonAdmin(req, res, url, deps) {
           return safeSend(409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_de_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
         }
 
-        const archives = await fetchMetaobjects("avalon_season_archive");
-        const matchingArchive = archives.find(node => {
-          const fields = memberFieldMap(node);
-          return clean(fields.category).toLocaleLowerCase() === category.toLocaleLowerCase();
-        });
-        if (matchingArchive && clean(memberFieldMap(matchingArchive).archive_status).toLocaleLowerCase() === "closed") {
-          return safeSend(409, { ok: false, error: "Esta categoría ya fue procesada. No se duplicaron títulos ni se borraron registros." });
-        }
-
+        // This flow uses only the merchant-created member and competition metaobjects.
+        // Do not create/update the app-reserved archive definition: Shopify rejects that type.
         const members = await fetchMetaobjects("perfil_de_miembro");
         const byId = new Map();
         for (const member of members) {
@@ -220,48 +213,33 @@ async function handleSeasonAdmin(req, res, url, deps) {
           if (id) byId.set(id.toLocaleLowerCase(), member);
         }
 
-        // Reuse an interrupted processing archive so a retry won't create duplicates.
-        console.log("[Avalon admin] etapa=archivo category=" + category + " registros=" + ranking.length);
-        const archive = matchingArchive || await createSeasonArchive(shopifyQuery, archiveName, category, ranking);
-        await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
         const awards = [];
-        try {
-          for (const row of ranking) {
-            const memberId = memberIdentifier(row.fields || {});
-            const member = byId.get(memberId.toLocaleLowerCase());
-            const title = titleForRank(row.rank, category, clean(data.title));
-            console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle);
-            const result = await updateMemberTitles(shopifyQuery, member, title);
-            awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
-          }
-          await setSeasonArchiveStatus(shopifyQuery, archive.id, "closed");
-        } catch (awardError) {
-          // The archive remains marked processing so a safe retry can skip already-awarded titles.
-          throw new Error("FALLÓ LA ASIGNACIÓN DE TÍTULOS. El archivo quedó en processing; no se han eliminado registros. Detalle: " + awardError.message);
+        for (const row of ranking) {
+          const memberId = memberIdentifier(row.fields || {});
+          const member = byId.get(memberId.toLocaleLowerCase());
+          const title = titleForRank(row.rank, category, clean(data.title));
+          console.log("[Avalon admin] etapa=titulo rank=" + row.rank + " member=" + member.handle);
+          const result = await updateMemberTitles(shopifyQuery, member, title);
+          awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
         }
 
+        // Delete only the competition records selected for this category, after all titles were saved.
         let deletedRecords = 0;
-        try {
-          for (const row of ranking) {
-            console.log("[Avalon admin] etapa=eliminar registro=" + row.id);
-            await deleteCompetitionRecord(shopifyQuery, row.id);
-            deletedRecords++;
-          }
-        } catch (deleteError) {
-          await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
-          throw new Error("FALLÓ LA ELIMINACIÓN después de guardar histórico y títulos (" + deletedRecords + "/" + ranking.length + "). No vuelvas a ejecutar; conserva los registros restantes. Detalle: " + deleteError.message);
+        for (const row of ranking) {
+          console.log("[Avalon admin] etapa=eliminar registro=" + row.id);
+          await deleteCompetitionRecord(shopifyQuery, row.id);
+          deletedRecords++;
         }
 
         return safeSend(201, {
           ok: true,
-          message: "Ranking archivado, títulos asignados y registros procesados eliminados.",
-          archive: { id: archive.id, handle: archive.handle, status: "closed" },
+          message: "Títulos asignados y registros de la categoría procesada eliminados.",
           rankingCount: ranking.length,
           deletedRecords,
           titlesGranted: awards.filter(award => award.updated).length,
           titlesAlreadyPresent: awards.filter(award => !award.updated).length,
           awards,
-          note: "El histórico conserva el ranking. Se eliminaron solo los registros incluidos en la categoría procesada; los títulos se asignaron por identificador permanente."
+          note: "Se eliminaron solo los registros incluidos en la categoría procesada; los títulos se asignaron por identificador permanente. El proceso no crea ni modifica definiciones de metaobjetos."
         });
     } catch (error) {
       safeSend(502, { ok: false, error: error.message || "No se pudo procesar la categoría." });
