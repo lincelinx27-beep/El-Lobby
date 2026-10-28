@@ -53,7 +53,7 @@ function memberIdentifier(fields) {
 }
 
 function existingTitles(raw) {
-  return String(raw || "").split(/\\s*[|;\\n]\\s*/).map(v => v.trim()).filter(Boolean);
+  return String(raw || "").split(/\s*[|;\n]\s*/).map(v => v.trim()).filter(Boolean);
 }
 
 async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
