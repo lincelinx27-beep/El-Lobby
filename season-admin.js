@@ -160,6 +160,33 @@ async function deleteCompetitionRecord(shopifyQuery, id) {
   }
 }
 
+async function saveSeasonHistory(shopifyQuery, seasonName, category, ranking) {
+  const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
+  const defs = data?.metaobjectDefinitions?.nodes || [];
+  const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const def = defs.find(item => norm(item.type) === norm("historial_de_temporadas")) || defs.find(item => norm(item.name).includes("historial") && norm(item.name).includes("temporada"));
+  if (!def?.id) throw new Error("No se encontró Historial de Temporadas. No se eliminaron registros de competición.");
+  const fieldDefs = def.fieldDefinitions || [];
+  const keyFor = aliases => fieldDefs.find(field => aliases.includes(norm(field.key)) || aliases.includes(norm(field.name)))?.key;
+  const nameKey = keyFor(["temporada", "nombretemporada", "nombredelatemporada", "nombre"]);
+  const categoryKey = keyFor(["categoria", "juego", "juegoprincipal"]);
+  const dateKey = keyFor(["fechadecierre", "fechacierre", "fecha"]);
+  const rankingKey = keyFor(["ranking", "rankingjson", "resultados", "clasificacion", "clasificacionfinal"]);
+  const statusKey = keyFor(["estado", "status"]);
+  const fields = [];
+  if (nameKey) fields.push({ key: nameKey, value: seasonName });
+  if (categoryKey) fields.push({ key: categoryKey, value: category });
+  if (dateKey) fields.push({ key: dateKey, value: new Date().toISOString() });
+  if (rankingKey) fields.push({ key: rankingKey, value: JSON.stringify(ranking) });
+  if (statusKey) fields.push({ key: statusKey, value: "cerrada" });
+  if (!nameKey || !rankingKey) throw new Error("Historial de Temporadas debe tener campos de temporada y ranking/resultados para archivar de forma segura.");
+  const handle = "temporada-" + String(seasonName).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now();
+  const created = await shopifyQuery('mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: $type, handle: $handle, fields: $fields }) { metaobject { id handle } userErrors { field message } } }', { type: def.type, handle, fields });
+  const errors = created?.metaobjectCreate?.userErrors || [];
+  if (errors.length || !created?.metaobjectCreate?.metaobject) throw new Error("No se pudo guardar Historial de Temporadas: " + errors.map(e => e.message).join("; "));
+  return created.metaobjectCreate.metaobject;
+}
+
 async function handleSeasonAdmin(req, res, url, deps) {
   const { send, clean, shopifyQuery, fetchMetaobjects, normalizeRecord, filterLeaderboard } = deps;
   if (!url.pathname.startsWith("/api/admin/seasons")) return false;
@@ -317,8 +344,8 @@ async function buildPreview(category) {
         }
         // Unmatched participants will receive a new profile and sequential permanent ID below.
 
-        // This flow uses only the merchant-created member and competition metaobjects.
-        // Do not create/update the app-reserved archive definition: Shopify rejects that type.
+        // Persist the complete ranking to the merchant-created Historial de Temporadas before mutating member profiles.
+        const history = await saveSeasonHistory(shopifyQuery, clean(data.seasonName) || category + " · " + new Date().toLocaleDateString("es-MX"), category, ranking);
         const members = await fetchMetaobjects("perfil_de_miembros");
         const byId = new Map();
         for (const member of members) {
@@ -356,8 +383,8 @@ async function buildPreview(category) {
 
         return safeSend(201, {
           ok: true,
-          message: "Títulos asignados y registros de la categoría procesada eliminados.",
-          rankingCount: ranking.length,
+          message: "Ranking guardado en Historial de Temporadas, títulos asignados y registros de la categoría procesada eliminados.",
+          historyId: history.id,\n          rankingCount: ranking.length,
           deletedRecords,
           titlesGranted: awards.filter(award => award.updated).length,
           titlesAlreadyPresent: awards.filter(award => !award.updated).length,
