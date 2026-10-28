@@ -394,7 +394,8 @@ async function buildPreview(category) {
         return safeSend(201, {
           ok: true,
           message: "Ranking guardado en Historial de Temporadas, títulos asignados y registros de la categoría procesada eliminados.",
-          historyId: history.id,\n          rankingCount: ranking.length,
+          historyId: history.id,
+          rankingCount: ranking.length,
           deletedRecords,
           titlesGranted: awards.filter(award => award.updated).length,
           titlesAlreadyPresent: awards.filter(award => !award.updated).length,
