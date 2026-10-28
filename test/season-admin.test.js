@@ -75,7 +75,7 @@ test("preview does not reuse an ID reserved even if the watermark lags", async (
 test("preview prioritizes the canonical counter over unrelated legacy counter records", async () => {
   const mock = mockShopify({ definitions, counters: [counterNode(2), { ...counterNode(3), id: "counter-2", handle: "another-counter" }] });
   // Only duplicate canonical handles are invalid; unrelated legacy records should not mask the canonical handle.
-  assert.equal(await getNextMemberIdForPreview(mock.query, [member("002")]), "004");
+  assert.equal(await getNextMemberIdForPreview(mock.query, [member("002")]), "003");
 });
 
 test("allocation reserves sequential IDs and advances the permanent watermark", async () => {
