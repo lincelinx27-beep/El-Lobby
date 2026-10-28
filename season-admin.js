@@ -438,8 +438,18 @@ async function getNextMemberIdForPreview(shopifyQuery, members) {
     const match = id.match(/(\d+)$/);
     if (match) last = Math.max(last, Number(match[1]));
   }
-  if (!Number.isSafeInteger(last) || last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
-  return String(last + 1).padStart(3, "0");
+  if (!Number.isSafeInteger(last)) throw new Error("El valor máximo de IDs existentes no es válido.");
+  // Preview remains read-only but skips IDs already reserved even when the watermark is stale.
+  while (last < 999999) {
+    const candidate = String(last + 1).padStart(3, "0");
+    const check = await shopifyQuery(
+      'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle } }',
+      { type: "avalon_member_id_reservation", handle: "member-" + candidate }
+    );
+    if (!check?.metaobjectByHandle) return candidate;
+    last++;
+  }
+  throw new Error("Se agotaron los identificadores disponibles.");
 }
 
 async function createMemberProfile(shopifyQuery, members, row, category) {
