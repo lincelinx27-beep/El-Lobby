@@ -49,7 +49,7 @@ function memberFieldMap(node) {
 }
 
 function memberIdentifier(fields) {
-  return String(fields.identificador_miembro || fields.identificador_del_miembro || "").trim();
+  return String(fields.identificador_de_miembro || fields.identificador_del_miembro || fields.identificador_miembro || "").trim();
 }
 
 function existingTitles(raw) {
@@ -77,14 +77,30 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   const fieldKey = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"].find(key => fields[key] !== undefined);
   if (!fieldKey) throw new Error("El perfil " + member.handle + " no tiene el campo Títulos Obtenidos con una clave compatible.");
 
-  const titles = existingTitles(fields[fieldKey]);
+  const definition = await shopifyQuery('query { metaobjectDefinitionByType(type: "perfil_de_miembro") { fieldDefinitions { key type { name } } } }');
+  const fieldDefinition = (definition?.metaobjectDefinitionByType?.fieldDefinitions || []).find(field => field.key === fieldKey);
+  const isList = String(fieldDefinition?.type?.name || "").startsWith("list.");
+  let titles;
+  const raw = fields[fieldKey] || "";
+  if (isList) {
+    try {
+      const parsed = JSON.parse(raw || "[]");
+      titles = Array.isArray(parsed) ? parsed.map(value => String(value).trim()).filter(Boolean) : existingTitles(raw);
+    } catch {
+      titles = existingTitles(raw);
+    }
+  } else {
+    titles = existingTitles(raw);
+  }
+
   if (titles.some(title => title.toLocaleLowerCase() === awardTitle.toLocaleLowerCase())) {
     return { updated: false, reason: "already-awarded" };
   }
 
+  const nextValue = isList ? JSON.stringify([...titles, awardTitle]) : [...titles, awardTitle].join(" | ");
   const result = await shopifyQuery(
     'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
-    { id: member.id, fields: [{ key: fieldKey, value: [...titles, awardTitle].join(" | ") }] }
+    { id: member.id, fields: [{ key: fieldKey, value: nextValue }] }
   );
   const errors = result?.metaobjectUpdate?.userErrors || [];
   if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
@@ -133,7 +149,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
         matched: assignments.filter(item => item.matchedMember).length,
         unmatched: assignments.filter(item => !item.matchedMember).map(({ rank, player, memberId }) => ({ rank, player, memberId })),
         duplicateMemberIds: [...new Set(duplicateIds)],
-        note: "Cada registro de competición debe incluir identificador_miembro (ej. avalon001). No se asocian perfiles por nombre."
+        note: "Cada registro de competición debe incluir identificador_de_miembro (ej. avalon001). No se asocian perfiles por nombre."
       }
     };
   }
@@ -171,7 +187,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
           return send(res, 409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
         }
         if (preview.titleAssignmentPreview.unmatched.length) {
-          return send(res, 409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
+          return send(res, 409, { ok: false, error: "Hay registros sin un perfil identificable por ID. Añade identificador_de_miembro al registro de competición y vuelve a intentarlo.", unmatched: preview.titleAssignmentPreview.unmatched.slice(0, 50), totalUnmatched: preview.titleAssignmentPreview.unmatched.length });
         }
 
         const archives = await fetchMetaobjects("avalon_season_archive");
