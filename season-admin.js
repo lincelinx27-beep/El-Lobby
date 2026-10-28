@@ -53,7 +53,7 @@ function memberIdentifier(fields) {
 }
 
 function existingTitles(raw) {
-  return String(raw || "").split(/\\s*[|;\\n]\\s*/).map(v => v.trim()).filter(Boolean);
+  return String(raw || "").split(/\s*[|;\n]\s*/).map(v => v.trim()).filter(Boolean);
 }
 
 async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
@@ -105,9 +105,10 @@ async function handleSeasonAdmin(req, res, url, deps) {
   }
 
   async function buildPreview(season, category) {
-    const shortCategory = category.includes("·") ? category.split("·").pop().trim() : category;
+    const categoryText = category.toLocaleLowerCase();
+    const categoryCode = categoryText.includes("grand cross") || categoryText.includes("grandcross") ? "7GC" : categoryText.includes("gremios") ? "7OriginG" : "7Origin";
     const nodes = await fetchMetaobjects("registro_competicion");
-    const params = new URLSearchParams({ category: shortCategory });
+    const params = new URLSearchParams({ category: categoryCode });
     const ranking = filterLeaderboard(nodes.map(normalizeRecord), params)
       .filter(record => record.season.toLocaleLowerCase() === season.toLocaleLowerCase());
     const memberNodes = await fetchMetaobjects("perfil_de_miembro");
