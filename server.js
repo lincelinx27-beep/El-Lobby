@@ -77,7 +77,7 @@ async function fetchMetaobjects(type,limit=250){
   return all.slice(0,limit);
 }
 function normalizeGame(value){
-  const normalized=clean(value).toUpperCase().replace(/\\s+/g,"").replace(/：/g,":");
+  const normalized=clean(value).toUpperCase().replace(/\s+/g,"").replace(/：/g,":");
   // Valores reales del campo Juego en los metaobjetos.
   if(normalized==="7DS:O")return "7DS:O";
   if(normalized==="7DS:GC")return "7DS:GC";
@@ -86,7 +86,7 @@ function normalizeGame(value){
 }
 function normalizeCategory(value){
   // Categoría se toma directamente del metaobjeto; normalizamos solo espacios y mayúsculas.
-  return clean(value).normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/\\s+/g," ").trim().toUpperCase();
+  return clean(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toUpperCase();
 }
 function filterLeaderboard(records,params){
   const game=normalizeGame(params.get("game"));
