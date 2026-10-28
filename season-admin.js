@@ -102,7 +102,8 @@ async function getNextMemberId(shopifyQuery, members) {
     const counters = records?.metaobjects?.nodes || [];
     const counterMatches = counters.filter(item => item.handle === "avalon-member-id-counter");
     if (counterMatches.length > 1) throw new Error("Hay más de un registro contador Avalon con el handle avalon-member-id-counter.");
-    let counter = counterMatches[0] || counters[0] || null;
+    // Never adopt an arbitrary counter record: only the canonical handle owns this sequence.
+    let counter = counterMatches[0] || null;
     let last = Number(counter?.fields?.find(field => field.key === "last_id")?.value || 0);
     if (!Number.isSafeInteger(last) || last < 0) throw new Error("El valor last_id del contador Avalon no es un entero válido.");
 
