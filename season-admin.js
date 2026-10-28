@@ -67,6 +67,112 @@ async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
   if (!result?.metaobjectUpdate?.metaobject) throw new Error("ARCHIVO / metaobjectUpdate avalon_season_archive: Shopify no confirmó el cambio de estado.");
 }
 
+async function getNextMemberId(shopifyQuery, members) {
+  // Process-local queue reduces collisions inside one node process. The reservation metaobject
+  // handle is the cross-instance uniqueness guard: Shopify accepts only one reservation per ID.
+  const previous = memberIdAllocationLock;
+  let release;
+  memberIdAllocationLock = new Promise(resolve => { release = resolve; });
+  await previous;
+  try {
+    const counterDefinition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type fieldDefinitions { key type { name } } } }');
+    if (!counterDefinition?.metaobjectDefinitionByType) {
+      const created = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_counter", name: "Avalon Member ID Counter", fieldDefinitions: [{ key: "last_id", name: "Last assigned ID", type: "number_integer" }] }) { metaobjectDefinition { id type } userErrors { field message } } }');
+      const errors = created?.metaobjectDefinitionCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectDefinitionCreate?.metaobjectDefinition) {
+        throw new Error("No se pudo crear la definición permanente avalon_member_id_counter: " + errors.map(e => e.message).join("; "));
+      }
+    } else {
+      const field = (counterDefinition.metaobjectDefinitionByType.fieldDefinitions || []).find(item => item.key === "last_id");
+      if (field && String(field.type?.name || "").toLowerCase() !== "number_integer") {
+        throw new Error("El campo last_id de avalon_member_id_counter debe ser Número entero (number_integer).");
+      }
+    }
+
+    const reservationDefinition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_reservation") { id type fieldDefinitions { key type { name } } } }');
+    if (!reservationDefinition?.metaobjectDefinitionByType) {
+      const created = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_reservation", name: "Avalon Member ID Reservation", fieldDefinitions: [{ key: "member_id", name: "Member ID", type: "single_line_text_field" }] }) { metaobjectDefinition { id type } userErrors { field message } } }');
+      const errors = created?.metaobjectDefinitionCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectDefinitionCreate?.metaobjectDefinition) {
+        throw new Error("No se pudo crear la definición de reservas permanentes avalon_member_id_reservation: " + errors.map(e => e.message).join("; "));
+      }
+    }
+
+    const records = await shopifyQuery('query { metaobjects(type: "avalon_member_id_counter", first: 50) { nodes { id handle fields { key value } } } }');
+    const counters = records?.metaobjects?.nodes || [];
+    const counterMatches = counters.filter(item => item.handle === "avalon-member-id-counter");
+    if (counterMatches.length > 1) throw new Error("Hay más de un registro contador Avalon con el handle avalon-member-id-counter.");
+    let counter = counterMatches[0] || counters[0] || null;
+    let last = Number(counter?.fields?.find(field => field.key === "last_id")?.value || 0);
+    if (!Number.isSafeInteger(last) || last < 0) throw new Error("El valor last_id del contador Avalon no es un entero válido.");
+
+    for (const member of members || []) {
+      const id = memberIdentifier(memberFieldMap(member));
+      const match = id.match(/(\d+)$/);
+      if (match) last = Math.max(last, Number(match[1]));
+    }
+    if (!Number.isSafeInteger(last) || last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
+
+    // Reserve each candidate using a unique handle before advancing the watermark. If two
+    // server instances race for the same ID, only one reservation can succeed.
+    let next = last + 1;
+    let reservation = null;
+    while (next <= 999999) {
+      const memberId = String(next).padStart(3, "0");
+      const handle = "member-" + memberId;
+      const existing = await shopifyQuery(
+        'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle } }',
+        { type: "avalon_member_id_reservation", handle }
+      );
+      if (existing?.metaobjectByHandle) {
+        next++;
+        continue;
+      }
+      const created = await shopifyQuery(
+        'mutation($handle: String!, $memberId: String!) { metaobjectCreate(metaobject: { type: "avalon_member_id_reservation", handle: $handle, fields: [{ key: "member_id", value: $memberId }] }) { metaobject { id handle } userErrors { field message } } }',
+        { handle, memberId }
+      );
+      const errors = created?.metaobjectCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectCreate?.metaobject) {
+        const message = errors.map(error => error.message).join("; ");
+        if (/handle.*(taken|exist|already)|already.*handle|unique/i.test(message)) {
+          next++;
+          continue;
+        }
+        throw new Error("No se pudo reservar el identificador " + memberId + ": " + (message || "Shopify no confirmó la reserva."));
+      }
+      reservation = created.metaobjectCreate.metaobject;
+      break;
+    }
+    if (!reservation) throw new Error("Se agotaron los identificadores disponibles.");
+    const memberId = String(next).padStart(3, "0");
+
+    if (counter) {
+      const update = await shopifyQuery(
+        'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id fields { key value } } userErrors { field message } } }',
+        { id: counter.id, fields: [{ key: "last_id", value: String(next) }] }
+      );
+      const errors = update?.metaobjectUpdate?.userErrors || [];
+      if (errors.length || !update?.metaobjectUpdate?.metaobject) {
+        // Reservation remains durable; the next allocation will skip it even if watermark update failed.
+        throw new Error("El ID " + memberId + " quedó reservado, pero no se pudo actualizar last_id. No se reutilizará; revisa el contador y vuelve a intentar.");
+      }
+    } else {
+      const created = await shopifyQuery(
+        'mutation($handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: "avalon_member_id_counter", handle: $handle, fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
+        { handle: "avalon-member-id-counter", fields: [{ key: "last_id", value: String(next) }] }
+      );
+      const errors = created?.metaobjectCreate?.userErrors || [];
+      if (errors.length || !created?.metaobjectCreate?.metaobject) {
+        throw new Error("El ID " + memberId + " quedó reservado, pero no se pudo crear el registro contador. No se reutilizará; revisa Shopify y vuelve a intentar.");
+      }
+    }
+    return memberId;
+  } finally {
+    release();
+  }
+}
+
 function titleForRank(rank, category, customTitle) {
   if (customTitle) return customTitle;
   const distinction = rank === 1 ? "Campeón" : rank === 2 ? "Subcampeón" : rank === 3 ? "Tercer lugar" : "Puesto " + rank;
@@ -311,111 +417,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
   if (!def) throw new Error("No se encontró la definición Perfil de Miembros.");
   return def;
 }
-async function getNextMemberId(shopifyQuery, members) {
-  // Process-local queue reduces collisions inside one node process. The reservation metaobject
-  // handle is the cross-instance uniqueness guard: Shopify accepts only one reservation per ID.
-  const previous = memberIdAllocationLock;
-  let release;
-  memberIdAllocationLock = new Promise(resolve => { release = resolve; });
-  await previous;
-  try {
-    const counterDefinition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type fieldDefinitions { key type { name } } } }');
-    if (!counterDefinition?.metaobjectDefinitionByType) {
-      const created = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_counter", name: "Avalon Member ID Counter", fieldDefinitions: [{ key: "last_id", name: "Last assigned ID", type: "number_integer" }] }) { metaobjectDefinition { id type } userErrors { field message } } }');
-      const errors = created?.metaobjectDefinitionCreate?.userErrors || [];
-      if (errors.length || !created?.metaobjectDefinitionCreate?.metaobjectDefinition) {
-        throw new Error("No se pudo crear la definición permanente avalon_member_id_counter: " + errors.map(e => e.message).join("; "));
-      }
-    } else {
-      const field = (counterDefinition.metaobjectDefinitionByType.fieldDefinitions || []).find(item => item.key === "last_id");
-      if (field && String(field.type?.name || "").toLowerCase() !== "number_integer") {
-        throw new Error("El campo last_id de avalon_member_id_counter debe ser Número entero (number_integer).");
-      }
-    }
 
-    const reservationDefinition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_reservation") { id type fieldDefinitions { key type { name } } } }');
-    if (!reservationDefinition?.metaobjectDefinitionByType) {
-      const created = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_reservation", name: "Avalon Member ID Reservation", fieldDefinitions: [{ key: "member_id", name: "Member ID", type: "single_line_text_field" }] }) { metaobjectDefinition { id type } userErrors { field message } } }');
-      const errors = created?.metaobjectDefinitionCreate?.userErrors || [];
-      if (errors.length || !created?.metaobjectDefinitionCreate?.metaobjectDefinition) {
-        throw new Error("No se pudo crear la definición de reservas permanentes avalon_member_id_reservation: " + errors.map(e => e.message).join("; "));
-      }
-    }
-
-    const records = await shopifyQuery('query { metaobjects(type: "avalon_member_id_counter", first: 50) { nodes { id handle fields { key value } } } }');
-    const counters = records?.metaobjects?.nodes || [];
-    const counterMatches = counters.filter(item => item.handle === "avalon-member-id-counter");
-    if (counterMatches.length > 1) throw new Error("Hay más de un registro contador Avalon con el handle avalon-member-id-counter.");
-    let counter = counterMatches[0] || counters[0] || null;
-    let last = Number(counter?.fields?.find(field => field.key === "last_id")?.value || 0);
-    if (!Number.isSafeInteger(last) || last < 0) throw new Error("El valor last_id del contador Avalon no es un entero válido.");
-
-    for (const member of members || []) {
-      const id = memberIdentifier(memberFieldMap(member));
-      const match = id.match(/(\d+)$/);
-      if (match) last = Math.max(last, Number(match[1]));
-    }
-    if (!Number.isSafeInteger(last) || last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
-
-    // Reserve each candidate using a unique handle before advancing the watermark. If two
-    // server instances race for the same ID, only one reservation can succeed.
-    let next = last + 1;
-    let reservation = null;
-    while (next <= 999999) {
-      const memberId = String(next).padStart(3, "0");
-      const handle = "member-" + memberId;
-      const existing = await shopifyQuery(
-        'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle } }',
-        { type: "avalon_member_id_reservation", handle }
-      );
-      if (existing?.metaobjectByHandle) {
-        next++;
-        continue;
-      }
-      const created = await shopifyQuery(
-        'mutation($handle: String!, $memberId: String!) { metaobjectCreate(metaobject: { type: "avalon_member_id_reservation", handle: $handle, fields: [{ key: "member_id", value: $memberId }] }) { metaobject { id handle } userErrors { field message } } }',
-        { handle, memberId }
-      );
-      const errors = created?.metaobjectCreate?.userErrors || [];
-      if (errors.length || !created?.metaobjectCreate?.metaobject) {
-        const message = errors.map(error => error.message).join("; ");
-        if (/handle.*(taken|exist|already)|already.*handle|unique/i.test(message)) {
-          next++;
-          continue;
-        }
-        throw new Error("No se pudo reservar el identificador " + memberId + ": " + (message || "Shopify no confirmó la reserva."));
-      }
-      reservation = created.metaobjectCreate.metaobject;
-      break;
-    }
-    if (!reservation) throw new Error("Se agotaron los identificadores disponibles.");
-    const memberId = String(next).padStart(3, "0");
-
-    if (counter) {
-      const update = await shopifyQuery(
-        'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id fields { key value } } userErrors { field message } } }',
-        { id: counter.id, fields: [{ key: "last_id", value: String(next) }] }
-      );
-      const errors = update?.metaobjectUpdate?.userErrors || [];
-      if (errors.length || !update?.metaobjectUpdate?.metaobject) {
-        // Reservation remains durable; the next allocation will skip it even if watermark update failed.
-        throw new Error("El ID " + memberId + " quedó reservado, pero no se pudo actualizar last_id. No se reutilizará; revisa el contador y vuelve a intentar.");
-      }
-    } else {
-      const created = await shopifyQuery(
-        'mutation($handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: "avalon_member_id_counter", handle: $handle, fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
-        { handle: "avalon-member-id-counter", fields: [{ key: "last_id", value: String(next) }] }
-      );
-      const errors = created?.metaobjectCreate?.userErrors || [];
-      if (errors.length || !created?.metaobjectCreate?.metaobject) {
-        throw new Error("El ID " + memberId + " quedó reservado, pero no se pudo crear el registro contador. No se reutilizará; revisa Shopify y vuelve a intentar.");
-      }
-    }
-    return memberId;
-  } finally {
-    release();
-  }
-}
 async function getNextMemberIdForPreview(shopifyQuery, members) {
   const definition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type fieldDefinitions { key type { name } } } }');
   let last = 0;
