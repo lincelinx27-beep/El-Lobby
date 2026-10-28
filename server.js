@@ -12,7 +12,15 @@ const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-07";
 const HTML_PATH = path.join(__dirname, "public", "index.html");
 const { handleSeasonAdmin } = require("./season-admin");
 
-function send(res, status, body) { res.writeHead(status, { "content-type":"application/json; charset=utf-8","cache-control":"no-store","access-control-allow-origin":"*" }); res.end(JSON.stringify(body,null,2)); }
+function send(res, status, body) {
+  if (res.writableEnded || res.destroyed || res.headersSent) {
+    console.warn("[HTTP] Se evitó una segunda respuesta", { status, url: res.req?.url });
+    return false;
+  }
+  res.writeHead(status, { "content-type":"application/json; charset=utf-8","cache-control":"no-store","access-control-allow-origin":"*" });
+  res.end(JSON.stringify(body,null,2));
+  return true;
+}
 function validShop(shop) { return typeof shop==="string" && /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop); }
 function configured() { return Boolean(APP_URL && SHOPIFY_API_KEY && SHOPIFY_API_SECRET && validShop(SHOPIFY_SHOP)); }
 function clean(value) { return String(value ?? "").trim(); }
@@ -88,7 +96,7 @@ function filterLeaderboard(records,params){
 }
 const server=http.createServer(async(req,res)=>{
   const adminHandled = await handleSeasonAdmin(req,res,new URL(req.url,APP_URL||"http://localhost"),{send,clean,shopifyQuery,fetchMetaobjects,normalizeRecord,filterLeaderboard});
-  if (adminHandled) return;
+  if (adminHandled || res.writableEnded || res.destroyed || res.headersSent) return;
   const url=new URL(req.url,APP_URL||"http://localhost");
   if(req.method==="OPTIONS"){res.writeHead(204,{"access-control-allow-origin":"*","access-control-allow-methods":"GET, OPTIONS","access-control-allow-headers":"content-type"});return res.end();}
   if(req.method==="GET"&&url.pathname==="/admin-seasons"){
