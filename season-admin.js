@@ -299,6 +299,32 @@ async function getNextMemberId(shopifyQuery, members) {
     release();
   }
 }
+async function getNextMemberIdForPreview(shopifyQuery, members) {
+  const definition = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type fieldDefinitions { key type { name } } } }');
+  let last = 0;
+  if (definition?.metaobjectDefinitionByType) {
+    const counterField = (definition.metaobjectDefinitionByType.fieldDefinitions || []).find(field => field.key === "last_id");
+    if (counterField && String(counterField.type?.name || "").toLowerCase() !== "number_integer") {
+      throw new Error("El campo last_id de avalon_member_id_counter debe ser Número entero (number_integer).");
+    }
+  }
+  const records = await shopifyQuery('query { metaobjects(type: "avalon_member_id_counter", first: 50) { nodes { id handle fields { key value } } } }');
+  const counters = records?.metaobjects?.nodes || [];
+  if (counters.filter(item => item.handle === "avalon-member-id-counter").length > 1) {
+    throw new Error("Hay más de un registro contador Avalon con el handle avalon-member-id-counter. Deja uno solo antes de continuar.");
+  }
+  const counter = counters.find(item => item.handle === "avalon-member-id-counter") || counters[0] || null;
+  last = Number(counter?.fields?.find(field => field.key === "last_id")?.value || 0);
+  if (!Number.isSafeInteger(last) || last < 0) throw new Error("El valor last_id del contador Avalon no es un entero válido.");
+  for (const member of members || []) {
+    const id = memberIdentifier(memberFieldMap(member));
+    const match = id.match(/(\\d+)$/);
+    if (match) last = Math.max(last, Number(match[1]));
+  }
+  if (!Number.isSafeInteger(last) || last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
+  return String(last + 1).padStart(3, "0");
+}
+
 async function createMemberProfile(shopifyQuery, members, row, category) {
   const def = await memberDefinition(shopifyQuery);
   const fieldsDef = def.fieldDefinitions || [];
@@ -474,4 +500,4 @@ async function buildPreview(category) {
   return true;
 }
 
-module.exports = { handleSeasonAdmin };
+module.exports = { handleSeasonAdmin, getNextMemberIdForPreview };
