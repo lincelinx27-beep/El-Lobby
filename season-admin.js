@@ -1,5 +1,6 @@
 // Avalon Season Admin — protected archive routes
 const ADMIN_TOKEN = process.env.AVALON_ADMIN_TOKEN || "";
+let memberIdAllocationLock = Promise.resolve();
 
 function authorized(req) {
   const header = req.headers.authorization || "";
@@ -209,9 +210,15 @@ async function handleSeasonAdmin(req, res, url, deps) {
   return def;
 }
 async function getNextMemberId(shopifyQuery, members) {
+  const previous = memberIdAllocationLock;
+  let release;
+  memberIdAllocationLock = new Promise(resolve => { release = resolve; });
+  await previous;
+  try {
+
   const definitions = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type } }');
   if (!definitions.metaobjectDefinitionByType) {
-    const createdDef = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_counter", name: "Avalon Member ID Counter", access: { storefront: NONE }, fieldDefinitions: [{ key: "last_id", name: "Last assigned ID", type: "number_integer" }] }) { metaobjectDefinition { id type } userErrors { message } } }');
+    const createdDef = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_counter", name: "Avalon Member ID Counter", fieldDefinitions: [{ key: "last_id", name: "Last assigned ID", type: "number_integer" }] }) { metaobjectDefinition { id type } userErrors { message } } }');
     const errors = createdDef?.metaobjectDefinitionCreate?.userErrors || [];
     if (errors.length || !createdDef?.metaobjectDefinitionCreate?.metaobjectDefinition) {
       throw new Error("No se pudo crear el contador permanente de IDs: " + errors.map(e => e.message).join("; "));
@@ -237,6 +244,9 @@ async function getNextMemberId(shopifyQuery, members) {
     if (errors.length || !create?.metaobjectCreate?.metaobject) throw new Error("No se pudo inicializar el contador de IDs: " + errors.map(e => e.message).join("; "));
   }
   return String(next).padStart(3, "0");
+  } finally {
+    release();
+  }
 }
 
 async function createMemberProfile(shopifyQuery, members, row, category) {
