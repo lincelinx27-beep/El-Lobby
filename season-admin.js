@@ -27,7 +27,7 @@ async function createSeasonArchive(shopifyQuery, name, category, ranking) {
     { key: "closed_at", value: new Date().toISOString() },
     { key: "category", value: category },
     { key: "ranking_json", value: JSON.stringify(ranking) },
-    { key: "archive_status", value: "closed" }
+    { key: "archive_status", value: "processing" }
   ];
   const result = await shopifyQuery(
     'mutation($handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: {type: "avalon_season_archive", handle: $handle, fields: $fields}) { metaobject { id handle } userErrors { field message } } }',
