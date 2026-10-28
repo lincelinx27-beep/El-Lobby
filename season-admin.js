@@ -459,6 +459,13 @@ async function buildPreview(category) {
             if (memberId) {
               throw new Error("El ranking trae el identificador " + memberId + " para " + clean(row.player) + ", pero no existe ese perfil. Corrige el ID del registro o crea el perfil correspondiente antes de cerrar; no se asignó otro ID automáticamente.");
             }
+            const existingByName = members.filter(candidate => {
+              const fields = memberFieldMap(candidate);
+              return String(fields.nombre_del_miembro || fields.nombre_de_miembro || fields.nombre || "").trim().toLocaleLowerCase() === clean(row.player).toLocaleLowerCase();
+            });
+            if (existingByName.length > 0) {
+              throw new Error("Ya existe un perfil con el nombre " + clean(row.player) + " pero el registro del ranking no tiene ID. Añade el identificador correcto al registro; no se creará un perfil duplicado.");
+            }
             member = await createMemberProfile(shopifyQuery, members, row, category);
             memberId = memberIdentifier(memberFieldMap(member));
             byId.set(memberId.toLocaleLowerCase(), member);
