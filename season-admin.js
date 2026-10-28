@@ -78,7 +78,7 @@ async function ensureMemberTitlesDefinition(shopifyQuery) {
   );
   const defs = result?.metaobjectDefinitions?.nodes || [];
   const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
-  let def = defs.find(item => norm(item.type) === norm("perfil_de_miembro"));
+  let def = defs.find(item => norm(item.type) === norm("perfil_de_miembros"));
   if (!def) def = defs.find(item => norm(item.name).includes("perfil") && norm(item.name).includes("miembro"));
   if (!def?.id) throw new Error("No se encontró la definición Perfil de Miembro. No se modificaron perfiles ni registros.");
 
@@ -98,7 +98,7 @@ async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
     const all = []; let after = null;
     while (all.length < 250) {
       const data = await shopifyQuery(
-        'query($after: String) { metaobjects(type: "catalogo_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
+        'query($after: String) { metaobjects(type: "catalogo_de_titulos", first: 100, after: $after) { nodes { id handle fields { key value } } pageInfo { hasNextPage endCursor } } }',
         { after }
       );
       const conn = data.metaobjects; all.push(...conn.nodes || []);
@@ -113,7 +113,7 @@ async function resolveCatalogTitle(shopifyQuery, requestedTitle) {
     return name && norm(name.value) === norm(wanted);
   });
   if (matches.length !== 1) {
-    throw new Error(matches.length ? "El catálogo contiene más de una entrada para el título '" + wanted + "'. Corrige los duplicados antes de cerrar." : "No se encontró '" + wanted + "' en Catálogo de Títulos (catalogo_titulos). Añade la entrada y vuelve a intentarlo. No se eliminaron registros.");
+    throw new Error(matches.length ? "El catálogo contiene más de una entrada para el título '" + wanted + "'. Corrige los duplicados antes de cerrar." : "No se encontró '" + wanted + "' en Catálogo de Títulos (catalogo_de_titulos). Añade la entrada y vuelve a intentarlo. No se eliminaron registros.");
   }
   return matches[0];
 }
@@ -176,10 +176,10 @@ async function handleSeasonAdmin(req, res, url, deps) {
   async function buildPreview(category) {
     const categoryText = category.toLocaleLowerCase();
     const categoryCode = categoryText.includes("grand cross") || categoryText.includes("grandcross") ? "7GC" : categoryText.includes("gremios") ? "7OriginG" : "7Origin";
-    const nodes = await fetchMetaobjects("registro_competicion");
+    const nodes = await fetchMetaobjects("registro_de_competicion");
     const params = new URLSearchParams({ category: categoryCode });
     const ranking = filterLeaderboard(nodes.map(normalizeRecord), params);
-    const memberNodes = await fetchMetaobjects("perfil_de_miembro");
+    const memberNodes = await fetchMetaobjects("perfil_de_miembros");
     const membersById = new Map();
     let duplicateIds = [];
     for (const member of memberNodes) {
@@ -246,7 +246,7 @@ async function handleSeasonAdmin(req, res, url, deps) {
 
         // This flow uses only the merchant-created member and competition metaobjects.
         // Do not create/update the app-reserved archive definition: Shopify rejects that type.
-        const members = await fetchMetaobjects("perfil_de_miembro");
+        const members = await fetchMetaobjects("perfil_de_miembros");
         const byId = new Map();
         for (const member of members) {
           const id = memberIdentifier(memberFieldMap(member));
