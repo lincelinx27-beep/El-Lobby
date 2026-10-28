@@ -78,6 +78,7 @@ async function fetchMetaobjects(type,limit=250){
 }
 function normalizeGame(value){
   const normalized=clean(value).toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]/g,"");
+  // Valores del campo Shopify "Juego": 7DS:O = Origin; 7DS:GC = Grand Cross.
   if(["origin","7dso","7dsorigin","thesevendeadlysinsorigin","7origing"].includes(normalized))return "origin";
   if(["grandcross","7dsgc","7dsgrandcross","7gc"].includes(normalized))return "grandcross";
   return normalized;
@@ -91,8 +92,30 @@ function normalizeCategory(value){
   return compact;
 }
 function filterLeaderboard(records,params){
-  const game=normalizeGame(params.get("game")),category=normalizeCategory(params.get("category")),season=clean(params.get("season")).toLowerCase(),challenge=clean(params.get("challenge")).toLowerCase(),verifiedOnly=params.get("verified")==="true";
-  return records.filter(r=>!category||normalizeCategory(r.category)===category).filter(r=>category||!game||normalizeGame(r.game)===game).filter(r=>!season||r.season.toLowerCase()===season).filter(r=>!challenge||r.challenge.toLowerCase()===challenge).filter(r=>!verifiedOnly||r.verified).sort((a,b)=>{if(a.timeMs>0&&b.timeMs>0&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;if(a.timeMs>0&&b.timeMs<=0)return -1;if(a.timeMs<=0&&b.timeMs>0)return 1;return b.score-a.score;}).map((r,index)=>({rank:index+1,...r,formattedTime:r.timeMs>0?`${r.minutes}:${String(r.seconds).padStart(2,"0")}.${String(r.milliseconds).padStart(3,"0")}`:null}));
+  const game=normalizeGame(params.get("game"));
+  const category=normalizeCategory(params.get("category"));
+  const season=clean(params.get("season")).toLowerCase();
+  const challenge=clean(params.get("challenge")).toLowerCase();
+  const verifiedOnly=params.get("verified")==="true";
+  return records
+    // Juego y categoría son filtros independientes: ambos deben coincidir cuando se proporcionan.
+    .filter(r=>!game||normalizeGame(r.game)===game)
+    .filter(r=>!category||normalizeCategory(r.category)===category)
+    .filter(r=>!season||r.season.toLowerCase()===season)
+    .filter(r=>!challenge||r.challenge.toLowerCase()===challenge)
+    .filter(r=>!verifiedOnly||r.verified)
+    // Los tiempos positivos van primero y se comparan en milisegundos; empate pasa a puntuación.
+    .sort((a,b)=>{
+      if(a.timeMs>0&&b.timeMs>0&&a.timeMs!==b.timeMs)return a.timeMs-b.timeMs;
+      if(a.timeMs>0&&b.timeMs<=0)return -1;
+      if(a.timeMs<=0&&b.timeMs>0)return 1;
+      return b.score-a.score;
+    })
+    .map((r,index)=>({
+      rank:index+1,
+      ...r,
+      formattedTime:r.timeMs>0?`${Math.floor(r.timeMs/60000)}:${String(Math.floor(r.timeMs/1000)%60).padStart(2,"0")}.${String(r.timeMs%1000).padStart(3,"0")}`:null
+    }));
 }
 const server=http.createServer(async(req,res)=>{
   const adminHandled = await handleSeasonAdmin(req,res,new URL(req.url,APP_URL||"http://localhost"),{send,clean,shopifyQuery,fetchMetaobjects,normalizeRecord,filterLeaderboard});
