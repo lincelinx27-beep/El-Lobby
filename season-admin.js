@@ -56,6 +56,22 @@ function existingTitles(raw) {
   return String(raw || "").split(/\\s*[|;\\n]\\s*/).map(v => v.trim()).filter(Boolean);
 }
 
+async function setSeasonArchiveStatus(shopifyQuery, archiveId, status) {
+  const result = await shopifyQuery(
+    'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle } userErrors { field message } } }',
+    { id: archiveId, fields: [{ key: "archive_status", value: status }] }
+  );
+  const errors = result?.metaobjectUpdate?.userErrors || [];
+  if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
+  if (!result?.metaobjectUpdate?.metaobject) throw new Error("Shopify no confirmó el estado del archivo de temporada.");
+}
+
+function titleForRank(rank, season, category, customTitle) {
+  if (customTitle) return customTitle;
+  const distinction = rank === 1 ? "Campeón" : rank === 2 ? "Subcampeón" : rank === 3 ? "Tercer lugar" : "Puesto " + rank;
+  return distinction + " · " + season + " · " + category;
+}
+
 async function updateMemberTitles(shopifyQuery, member, awardTitle) {
   const fields = memberFieldMap(member);
   const fieldKey = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"].find(key => fields[key] !== undefined);
@@ -158,13 +174,14 @@ async function handleSeasonAdmin(req, res, url, deps) {
         }
 
         const archives = await fetchMetaobjects("avalon_season_archive");
-        const alreadyClosed = archives.some(node => {
+        const matchingArchive = archives.find(node => {
           const fields = memberFieldMap(node);
           return clean(fields.season_name).toLocaleLowerCase() === season.toLocaleLowerCase()
-            && clean(fields.category).toLocaleLowerCase() === category.toLocaleLowerCase()
-            && clean(fields.archive_status).toLocaleLowerCase() === "closed";
+            && clean(fields.category).toLocaleLowerCase() === category.toLocaleLowerCase();
         });
-        if (alreadyClosed) return send(res, 409, { ok: false, error: "Esta temporada y categoría ya están cerradas. No se duplicó el archivo ni se reasignaron títulos." });
+        if (matchingArchive && clean(memberFieldMap(matchingArchive).archive_status).toLocaleLowerCase() === "closed") {
+          return send(res, 409, { ok: false, error: "Esta temporada y categoría ya están cerradas. No se duplicó el archivo ni se reasignaron títulos." });
+        }
 
         const members = await fetchMetaobjects("perfil_de_miembro");
         const byId = new Map();
@@ -173,26 +190,33 @@ async function handleSeasonAdmin(req, res, url, deps) {
           if (id) byId.set(id.toLocaleLowerCase(), member);
         }
 
-        // The durable snapshot is written first. No title mutation happens if archiving fails.
-        const archive = await createSeasonArchive(shopifyQuery, season, category, ranking);
+        // Reuse an interrupted processing archive so a retry won't create duplicates.
+        const archive = matchingArchive || await createSeasonArchive(shopifyQuery, season, category, ranking);
+        await setSeasonArchiveStatus(shopifyQuery, archive.id, "processing");
         const awards = [];
-        for (const row of ranking) {
-          const memberId = memberIdentifier(row.fields || {});
-          const member = byId.get(memberId.toLocaleLowerCase());
-          const title = clean(data.title) || (season + " · " + category);
-          const result = await updateMemberTitles(shopifyQuery, member, title);
-          awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
+        try {
+          for (const row of ranking) {
+            const memberId = memberIdentifier(row.fields || {});
+            const member = byId.get(memberId.toLocaleLowerCase());
+            const title = titleForRank(row.rank, season, category, clean(data.title));
+            const result = await updateMemberTitles(shopifyQuery, member, title);
+            awards.push({ rank: row.rank, player: row.player, memberId, title, updated: result.updated, reason: result.reason || null });
+          }
+          await setSeasonArchiveStatus(shopifyQuery, archive.id, "closed");
+        } catch (awardError) {
+          // The archive remains marked processing so a safe retry can skip already-awarded titles.
+          throw new Error("El archivo quedó guardado como processing; algunos perfiles pueden haberse actualizado. Corrige el problema y vuelve a ejecutar el cierre. Detalle: " + awardError.message);
         }
 
         return send(res, 201, {
           ok: true,
           message: "Temporada archivada y títulos procesados.",
-          archive,
+          archive: { id: archive.id, handle: archive.handle, status: "closed" },
           rankingCount: ranking.length,
           titlesGranted: awards.filter(award => award.updated).length,
           titlesAlreadyPresent: awards.filter(award => !award.updated).length,
           awards,
-          note: "Los registros originales se conservaron. Los miembros se identificaron exclusivamente por identificador_miembro."
+          note: "Los registros originales se conservaron. Los títulos se asignaron por identificador_miembro y posición."
         });
       } catch (error) {
         send(res, 502, { ok: false, error: error.message || "No se pudo cerrar la temporada." });
