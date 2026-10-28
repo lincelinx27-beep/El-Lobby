@@ -79,14 +79,21 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
 
   const definition = await shopifyQuery('query { metaobjectDefinitionByType(type: "perfil_de_miembro") { fieldDefinitions { key type { name } } } }');
   const fieldDefinition = (definition?.metaobjectDefinitionByType?.fieldDefinitions || []).find(field => field.key === fieldKey);
-  const isList = String(fieldDefinition?.type?.name || "").startsWith("list.");
+  const fieldType = String(fieldDefinition?.type?.name || "").toLowerCase();
+  const isList = fieldType.startsWith("list.");
+  const isJson = fieldType === "json";
+  const needsJsonEncoding = isList || isJson;
   let titles;
   const raw = fields[fieldKey] || "";
-  if (isList) {
+  if (needsJsonEncoding) {
     try {
       const parsed = JSON.parse(raw || "[]");
-      titles = Array.isArray(parsed) ? parsed.map(value => String(value).trim()).filter(Boolean) : existingTitles(raw);
+      titles = Array.isArray(parsed)
+        ? parsed.map(value => String(value).trim()).filter(Boolean)
+        : existingTitles(raw);
     } catch {
+      // Some existing records may contain a legacy plain-text title despite the
+      // field being JSON/list typed. Normalize those values before writing.
       titles = existingTitles(raw);
     }
   } else {
@@ -97,7 +104,7 @@ async function updateMemberTitles(shopifyQuery, member, awardTitle) {
     return { updated: false, reason: "already-awarded" };
   }
 
-  const nextValue = isList ? JSON.stringify([...titles, awardTitle]) : [...titles, awardTitle].join(" | ");
+  const nextValue = needsJsonEncoding ? JSON.stringify([...titles, awardTitle]) : [...titles, awardTitle].join(" | ");
   const result = await shopifyQuery(
     'mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }',
     { id: member.id, fields: [{ key: fieldKey, value: nextValue }] }
