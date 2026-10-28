@@ -181,16 +181,37 @@ async function handleSeasonAdmin(req, res, url, deps) {
   if (!def) throw new Error("No se encontró la definición Perfil de Miembros.");
   return def;
 }
-function nextMemberId(members) {
-  let max = 0;
+async function getNextMemberId(shopifyQuery, members) {
+  const definitions = await shopifyQuery('query { metaobjectDefinitionByType(type: "avalon_member_id_counter") { id type } }');
+  if (!definitions.metaobjectDefinitionByType) {
+    const createdDef = await shopifyQuery('mutation { metaobjectDefinitionCreate(definition: { type: "avalon_member_id_counter", name: "Avalon Member ID Counter", access: { storefront: NONE }, fieldDefinitions: [{ key: "last_id", name: "Last assigned ID", type: "number_integer" }] }) { metaobjectDefinition { id type } userErrors { message } } }');
+    const errors = createdDef?.metaobjectDefinitionCreate?.userErrors || [];
+    if (errors.length || !createdDef?.metaobjectDefinitionCreate?.metaobjectDefinition) {
+      throw new Error("No se pudo crear el contador permanente de IDs: " + errors.map(e => e.message).join("; "));
+    }
+  }
+  const records = await shopifyQuery('query { metaobjects(type: "avalon_member_id_counter", first: 10) { nodes { id handle fields { key value } } } }');
+  let counter = records?.metaobjects?.nodes?.[0] || null;
+  let last = Number(counter?.fields?.find(field => field.key === "last_id")?.value || 0);
   for (const member of members) {
     const id = memberIdentifier(memberFieldMap(member));
     const match = id.match(/(\\d+)$/);
-    if (match) max = Math.max(max, Number(match[1]));
+    if (match) last = Math.max(last, Number(match[1]));
   }
-  if (max >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
-  return String(max + 1).padStart(3, "0");
+  if (last >= 999999) throw new Error("Se agotaron los identificadores disponibles.");
+  const next = last + 1;
+  if (counter) {
+    const update = await shopifyQuery('mutation($id: ID!, $fields: [MetaobjectFieldInput!]!) { metaobjectUpdate(id: $id, metaobject: { fields: $fields }) { metaobject { id fields { key value } } userErrors { message } } }', { id: counter.id, fields: [{ key: "last_id", value: String(next) }] });
+    const errors = update?.metaobjectUpdate?.userErrors || [];
+    if (errors.length || !update?.metaobjectUpdate?.metaobject) throw new Error("No se pudo reservar el siguiente ID: " + errors.map(e => e.message).join("; "));
+  } else {
+    const create = await shopifyQuery('mutation($handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: "avalon_member_id_counter", handle: $handle, fields: $fields }) { metaobject { id fields { key value } } userErrors { message } } }', { handle: "avalon-member-id-counter", fields: [{ key: "last_id", value: String(next) }] });
+    const errors = create?.metaobjectCreate?.userErrors || [];
+    if (errors.length || !create?.metaobjectCreate?.metaobject) throw new Error("No se pudo inicializar el contador de IDs: " + errors.map(e => e.message).join("; "));
+  }
+  return String(next).padStart(3, "0");
 }
+
 async function createMemberProfile(shopifyQuery, members, row, category) {
   const def = await memberDefinition(shopifyQuery);
   const fieldsDef = def.fieldDefinitions || [];
@@ -205,7 +226,7 @@ async function createMemberProfile(shopifyQuery, members, row, category) {
   const gameKey = findKey("juego", "juego_principal");
   const titlesKey = findKey("titulos_obtenidos", "titulos_obtenidos_");
   if (!idKey || !nameKey) throw new Error("Perfil de Miembros necesita campos Nombre del Miembro e Identificador de Miembro para crear perfiles automáticamente.");
-  const id = nextMemberId(members);
+  const id = await getNextMemberId(shopifyQuery, members);
   const values = [
     { key: idKey, value: id },
     { key: nameKey, value: clean(row.player) || "Miembro Avalon" }
