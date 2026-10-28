@@ -73,22 +73,29 @@ function titleForRank(rank, category, customTitle) {
 }
 
 async function ensureMemberTitlesDefinition(shopifyQuery) {
-  const definitionResult = await shopifyQuery(
-    'query { metaobjectDefinitionByType(type: "perfil_de_miembro") { id type fieldDefinitions { key name type { name } } } }'
+  // Shopify may return null for metaobjectDefinitionByType when a definition
+  // is owned by another app. Discover definitions through the connection first.
+  const definitionsResult = await shopifyQuery(
+    'query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }'
   );
-  const definition = definitionResult?.metaobjectDefinitionByType;
+  const definitions = definitionsResult?.metaobjectDefinitions?.nodes || [];
+  const normalize = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const targetType = normalize("perfil_de_miembro");
+  let definition = definitions.find(item => normalize(item.type) === targetType);
+  if (!definition) {
+    definition = definitions.find(item => normalize(item.name).includes("perfil") && normalize(item.name).includes("miembro"));
+  }
   if (!definition?.id) {
-    throw new Error("TÍTULOS / perfil_de_miembro: no se encontró la definición del metaobjeto. No se modificó ningún perfil.");
+    const observed = definitions.map(item => item.type + " (" + item.name + ")").join(", ");
+    throw new Error("TÍTULOS / no se localizó la definición de Perfil de Miembro en metaobjectDefinitions. Tipos visibles para esta app: " + (observed || "ninguno") + ". Verifica que el token de Shopify tenga acceso a definiciones/metaobjetos y que la definición esté visible para esta app. No se modificó ningún perfil.");
   }
 
-  const possibleKeys = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_", "títulos_obtenidos_"];
+  const possibleKeys = ["titulos_obtenidos", "títulos_obtenidos", "titulos_obtenidos_"];
   let fieldDefinition = (definition.fieldDefinitions || []).find(field => possibleKeys.includes(field.key));
   if (fieldDefinition) return fieldDefinition;
 
-  // The merchant's member-profile definition has no award field yet. Add it to
-  // that existing definition instead of assuming the field already exists.
   const update = await shopifyQuery(
-    'mutation($id: ID!, $fields: [MetaobjectFieldDefinitionInput!]!) { metaobjectDefinitionUpdate(id: $id, definition: { fieldDefinitions: $fields }) { metaobjectDefinition { id fieldDefinitions { key name type { name } } } userErrors { field message } } }',
+    'mutation($id: ID!, $fields: [MetaobjectFieldDefinitionInput!]!) { metaobjectDefinitionUpdate(id: $id, definition: { fieldDefinitions: $fields }) { metaobjectDefinition { id type fieldDefinitions { key name type { name } } } userErrors { field message } } }',
     { id: definition.id, fields: [{ key: "titulos_obtenidos", name: "Títulos Obtenidos", type: "list.single_line_text_field" }] }
   );
   const errors = update?.metaobjectDefinitionUpdate?.userErrors || [];
