@@ -119,16 +119,16 @@ const server=http.createServer(async(req,res)=>{
     catch(error){return send(res,502,{ok:false,error:error.message});}
   }
   if(req.method==="GET"&&url.pathname==="/api/competitions"){
-    try{const nodes=await fetchMetaobjects("registro_competicion");return send(res,200,{ok:true,count:nodes.length,competitions:nodes.map(normalizeRecord)});}
+    try{const nodes=await fetchMetaobjects("registro_de_competicion");return send(res,200,{ok:true,count:nodes.length,competitions:nodes.map(normalizeRecord)});}
     catch(error){return send(res,502,{ok:false,error:error.message,hint:"Comprueba el handle registro_competicion y los permisos de metaobjetos."});}
   }
   if(req.method==="GET"&&url.pathname==="/api/leaderboard"){
-    try{const nodes=await fetchMetaobjects("registro_competicion"),leaderboard=filterLeaderboard(nodes.map(normalizeRecord),url.searchParams);return send(res,200,{ok:true,count:leaderboard.length,filters:Object.fromEntries(url.searchParams.entries()),leaderboard});}
+    try{const nodes=await fetchMetaobjects("registro_de_competicion"),leaderboard=filterLeaderboard(nodes.map(normalizeRecord),url.searchParams);return send(res,200,{ok:true,count:leaderboard.length,filters:Object.fromEntries(url.searchParams.entries()),leaderboard});}
     catch(error){return send(res,502,{ok:false,error:error.message,hint:"Comprueba el handle registro_competicion y los permisos de metaobjetos."});}
   }
   if(req.method==="GET"&&url.pathname==="/api/guilds"){
     try{
-      const nodes=await fetchMetaobjects("ranking_gremios"),game=clean(url.searchParams.get("game")).toLowerCase(),verifiedOnly=url.searchParams.get("verified")==="true";
+      const nodes=await fetchMetaobjects("ranking_de_gremios"),game=clean(url.searchParams.get("game")).toLowerCase(),verifiedOnly=url.searchParams.get("verified")==="true";
       const guilds=nodes.map(node=>{
         const fields=fieldMap(node.fields),pick=(...keys)=>{for(const key of keys)if(fields[key]!==undefined&&fields[key]!==null&&fields[key]!=="")return fields[key];return "";};
         const rawLogo=pick("logo_del_gremio","logo_gremio","logo");let logo=clean(rawLogo);if(logo&&!/^https:\/\//i.test(logo))logo="";
@@ -138,11 +138,11 @@ const server=http.createServer(async(req,res)=>{
     }catch(error){return send(res,502,{ok:false,error:error.message,hint:"Comprueba el handle ranking_gremios y los permisos de metaobjetos."});}
   }
   if(req.method==="GET"&&url.pathname==="/api/titles"){
-    try{const nodes=await fetchMetaobjects("catalogo_titulos");return send(res,200,{ok:true,count:nodes.length,titles:nodes.map(node=>({id:node.id,handle:node.handle,fields:fieldMap(node.fields)}))});}
+    try{const nodes=await fetchMetaobjects("catalogo_de_titulos");return send(res,200,{ok:true,count:nodes.length,titles:nodes.map(node=>({id:node.id,handle:node.handle,fields:fieldMap(node.fields)}))});}
     catch(error){return send(res,502,{ok:false,error:error.message});}
   }
   if(req.method==="GET"&&url.pathname==="/api/members"){
-    try{const nodes=await fetchMetaobjects("perfil_de_miembro");return send(res,200,{ok:true,count:nodes.length,members:nodes.map(node=>({id:node.id,handle:node.handle,fields:fieldMap(node.fields)}))});}
+    try{const nodes=await fetchMetaobjects("perfil_de_miembros");return send(res,200,{ok:true,count:nodes.length,members:nodes.map(node=>({id:node.id,handle:node.handle,fields:fieldMap(node.fields)}))});}
     catch(error){return send(res,502,{ok:false,error:error.message});}
   }
   return send(res,404,{ok:false,error:"No encontrado",build:BUILD,requestedPath:url.pathname});
