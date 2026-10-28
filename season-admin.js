@@ -216,7 +216,7 @@ function titleForRank(rank, category, customTitle) {
   return distinction + " · " + category;
 }
 
-async function validateSeasonSetup(shopifyQuery, ranking) {
+async function validateSeasonSetup(shopifyQuery, ranking, selectedCategory) {
   const data = await shopifyQuery('query { metaobjectDefinitions(first: 250) { nodes { id type name fieldDefinitions { key name type { name } } } } }');
   const defs = data?.metaobjectDefinitions?.nodes || [];
   const norm = value => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
@@ -228,9 +228,9 @@ async function validateSeasonSetup(shopifyQuery, ranking) {
   if (!earned) throw new Error("Falta la definición titulo_obtenido.");
   if (!history) throw new Error("Falta la definición historial_de_temporadas.");
   const catalogEntries = await resolveCatalogTitlesForValidation(shopifyQuery);
-  const titles = [...new Set((ranking || []).map(row => titleForRank(row.rank, row.category || "", "")))];
-  // Validate the catalog labels used by the current category before writing history or profiles.
-  const category = (ranking || [])[0]?.category || "";
+  // Validate the catalog labels used by the selected panel category before writing history or profiles.
+  const category = String(selectedCategory || "").trim();
+  if (!category) throw new Error("Selecciona una categoría para cerrar la temporada.");
   const requiredTitles = (ranking || []).map(row => titleForRank(row.rank, category, ""));
   const missing = requiredTitles.filter(title => !catalogEntries.some(entry => norm(entry.name) === norm(title)));
   if (missing.length) throw new Error("Faltan títulos en catalogo_de_titulos para esta categoría: " + [...new Set(missing)].join(", ") + ". No se modificó ningún perfil ni registro de competición.");
@@ -564,7 +564,7 @@ async function buildPreview(category) {
           return safeSend(409, { ok: false, error: "Hay IDs de miembro duplicados. No se archivó ni se asignaron títulos.", duplicateMemberIds: preview.titleAssignmentPreview.duplicateMemberIds });
         }
         // Validate catalog and required metaobject definitions before making any changes.
-        await validateSeasonSetup(shopifyQuery, ranking);
+        await validateSeasonSetup(shopifyQuery, ranking, category);
         // Existing IDs must map to profiles; new profiles are only for rows without an ID.
         const rowIds = ranking.map(row => memberIdentifier(row.fields || "")).filter(Boolean).map(id => id.toLocaleLowerCase());
         if (new Set(rowIds).size !== rowIds.length) {
