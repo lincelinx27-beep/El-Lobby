@@ -30,13 +30,35 @@ async function getToken(){
   if(!response.ok||!data.access_token)throw new Error(`Token Shopify: ${String(data.error_description||data.error||`HTTP ${response.status}`).slice(0,240)}`);
   tokenCache={token:data.access_token,expiresAt:Date.now()+Number(data.expires_in||86399)*1000};return tokenCache.token;
 }
-async function shopifyQuery(query,variables={}){
-  const token=await getToken(),response=await fetch(`https://${SHOPIFY_SHOP}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,{method:"POST",headers:{"content-type":"application/json",accept:"application/json","x-shopify-access-token":token},body:JSON.stringify({query,variables})});
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw new Error(`Admin API Shopify: HTTP ${response.status}. Revisa versión, instalación y permisos.`);
-  if(data.errors?.length)throw new Error(`GraphQL Shopify: ${data.errors.map(e=>e.message).filter(Boolean).join("; ").slice(0,300)}`);
+async function shopifyQuery(query, variables = {}) {
+  const token = await getToken();
+  const response = await fetch(`https://${SHOPIFY_SHOP}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      "x-shopify-access-token": token
+    },
+    body: JSON.stringify({ query, variables })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = data?.errors?.map(e => e.message).filter(Boolean).join("; ")
+      || data?.error_description || data?.error || `HTTP ${response.status}`;
+    throw new Error(`Admin API Shopify: ${String(detail).slice(0, 500)}`);
+  }
+  if (data.errors?.length) {
+    const detail = data.errors.map(error => {
+      const code = error.extensions?.code || error.extensions?.errorCode || "";
+      const path = Array.isArray(error.path) ? error.path.join(".") : "";
+      return [code, path, error.message].filter(Boolean).join(": ");
+    }).join(" | ");
+    throw new Error(`GraphQL Shopify: ${detail.slice(0, 700)}`);
+  }
+  if (!data.data) throw new Error("Shopify no devolvió data GraphQL válida.");
   return data.data;
 }
+
 async function fetchMetaobjects(type,limit=250){
   const all=[];let after=null;
   while(all.length<limit){
