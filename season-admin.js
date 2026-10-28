@@ -149,8 +149,16 @@ async function createEarnedTitleRecord(shopifyQuery, member, catalogTitle, row, 
   if (seasonField) fields.push({ key: seasonField.key, value: seasonName });
   if (dateField) fields.push({ key: dateField.key, value: new Date().toISOString() });
   if (!titleRef && !memberIdField && !memberRef) throw new Error("Título Obtenido no tiene campos compatibles para guardar título y miembro.");
-  const handle = "titulo-" + memberIdentifier(memberFieldMap(member)).toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now() + "-" + row.rank;
-  const created = await shopifyQuery('mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: $type, handle: $handle, fields: $fields }) { metaobject { id handle } userErrors { field message } } }', { type: def.type, handle, fields });
+  const seasonSlug = String(seasonName || category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70);
+  const categorySlug = String(category).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  const memberSlug = memberIdentifier(memberFieldMap(member)).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const handle = ("titulo-" + memberSlug + "-" + categorySlug + "-" + seasonSlug + "-r" + row.rank).slice(0, 250).replace(/-+$/g, "");
+  const existing = await shopifyQuery(
+    'query($type: String!, $handle: String!) { metaobjectByHandle(type: $type, handle: $handle) { id handle fields { key value } } }',
+    { type: def.type, handle }
+  );
+  if (existing?.metaobjectByHandle) return existing.metaobjectByHandle;
+  const created = await shopifyQuery('mutation($type: String!, $handle: String!, $fields: [MetaobjectFieldInput!]!) { metaobjectCreate(metaobject: { type: $type, handle: $handle, fields: $fields }) { metaobject { id handle fields { key value } } userErrors { field message } } }', { type: def.type, handle, fields });
   const errors = created?.metaobjectCreate?.userErrors || [];
   if (errors.length || !created?.metaobjectCreate?.metaobject) throw new Error("No se pudo guardar el título obtenido para " + member.handle + ": " + errors.map(e => e.message).join("; "));
   return created.metaobjectCreate.metaobject;
